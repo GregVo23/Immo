@@ -1,0 +1,9 @@
+node_modules
+
+# Données de scrape et sorties générées — recréées par npm start / npm run dashboard
+annonces-brutes.json
+annonces.json
+dashboard.html
+geocode-cache.json
+debug/
+storage/

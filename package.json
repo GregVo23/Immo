@@ -1,0 +1,16 @@
+{
+  "name": "scraper-playwright",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node scrapper_immo.mjs",
+    "reparse": "node parse_annonces.mjs",
+    "dashboard": "node generate_dashboard.mjs",
+    "test": "node test_parse.mjs",
+    "all": "node scrapper_immo.mjs && node generate_dashboard.mjs"
+  },
+  "dependencies": {
+    "crawlee": "^3.0.0",
+    "playwright": "^1.0.0"
+  }
+}
