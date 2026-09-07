@@ -3,8 +3,9 @@
  * Lancer : node test_parse.mjs
  */
 
-import { construireAnnonce, dedupliquer, parseSurfaces, parsePieces, parseStatut, parseJoursEnLigne, parsePeb } from './lib/parse.mjs';
+import { construireAnnonce, dedupliquer, parseSurfaces, parsePieces, parseStatut, parseJoursEnLigne, parsePeb, parseCpEtVilleDepuisLien, parseTypeBien } from './lib/parse.mjs';
 import { SITES } from './config.mjs';
+import { TYPES_EXCLUS as TYPES_EXCLUS_TEST } from './parse_annonces.mjs';
 
 /** Les vrais hints du portail, pour tester ce qui tournera en production. */
 const hintsDe = (source) => Object.values(SITES).find((s) => s.source === source)?.hints ?? {};
@@ -415,6 +416,206 @@ const promo = construireAnnonce(
 );
 verifier('"Best of" écarté du titre', promo.titre, 'Maison 3 ch. à Liedekerke');
 verifier('nom de ville seul pas retenu comme titre', promo.titre === 'Liedekerke', false);
+
+console.log('\n== Fragments réels : Trior ==');
+
+// Le CP n'apparaît nulle part dans le texte de la carte ("Waterloo" seul,
+// jamais "1410 Waterloo") : il ne peut venir que de l'URL de l'annonce.
+const triorReel = construireAnnonce(
+    {
+        fragments: ['4', '2', '230 m²', '1', 'Nouveau', 'Waterloo', 'Villa à vendre', '650 000 €'],
+        lien: 'https://immo.trior.be/fr/bien/a-vendre/maison/1410-waterloo/7854102',
+        imageUrl: 'https://r2.storagewhise.eu/triorwaterloo/Pictures/x.jpg',
+        source: 'Trior',
+        dateExtraction: '',
+    },
+    hintsDe('Trior'),
+);
+verifier('chambres/sdb avant la surface', [triorReel.chambres, triorReel.sallesDeBain], [4, 2]);
+verifier('surface habitable', triorReel.surfaceHabitable, 230);
+verifier('terrain en ares → m² (1 are)', triorReel.surfaceTerrain, 100);
+verifier('CP retrouvé via le lien', triorReel.cp, '1410');
+verifier('commune résolue', triorReel.commune, 'Waterloo');
+verifier('dans le périmètre', triorReel.dansPerimetre, true);
+// "Villa à vendre" est aussi générique que "Maison à vendre" : écarté au
+// profit d'un titre fabriqué, comme pour Immovlan.
+verifier('"Villa à vendre" générique écarté', triorReel.titre, 'Maison 4 ch. à Waterloo');
+verifier('"Nouveau" écarté du parsing', triorReel.champsManquants.includes('surfacesAmbigues'), false);
+
+const triorException = construireAnnonce(
+    {
+        fragments: ['5', '3', '340 m²', '8', 'Court-Saint-Etienne', 'Bien exceptionnel à vendre', '1 850 000 €'],
+        lien: 'https://immo.trior.be/fr/bien/a-vendre/maison/1490-court-saint-etienne/7849727',
+        source: 'Trior',
+        dateExtraction: '',
+    },
+    hintsDe('Trior'),
+);
+verifier('prix avec espaces multiples', triorException.prix, 1850000);
+verifier('8 ares → 800 m² de terrain', triorException.surfaceTerrain, 800);
+verifier('commune Court-Saint-Étienne (accent) via CP', triorException.commune, 'Court-Saint-Étienne');
+
+// Titre générique ("Maison à vendre") : doit être écarté comme chez Immovlan,
+// au profit d'un titre fabriqué.
+const triorGenerique = construireAnnonce(
+    { fragments: ['3', '1', '145 m²', 'Nouveau', 'Lasne', 'Maison à vendre', '545 000 €'], lien: 'https://immo.trior.be/fr/bien/a-vendre/maison/1380-lasne/7852240', source: 'Trior', dateExtraction: '' },
+    hintsDe('Trior'),
+);
+verifier('titre générique écarté', triorGenerique.titre, 'Maison 3 ch. à Lasne');
+verifier('pas de terrain si aucun entier après la surface', triorGenerique.surfaceTerrain, null);
+
+// Prix de départ, sur un immeuble à appartements
+const triorAPartirDe = construireAnnonce(
+    { fragments: ['5', '5', '350 m²', 'Nouveau', 'Bruxelles', 'Immeuble à appartements à vendre', 'À partir de', '895 000 €'], lien: 'https://immo.trior.be/fr/bien/a-vendre/maison/1020-bruxelles/7850710', source: 'Trior', dateExtraction: '' },
+    hintsDe('Trior'),
+);
+verifier('prix de départ détecté', triorAPartirDe.prixAPartirDe, true);
+verifier('titre distinctif conservé (pas générique)', triorAPartirDe.titre, 'Immeuble à appartements à vendre');
+verifier('Bruxelles (1020) hors périmètre', triorAPartirDe.dansPerimetre, false);
+
+// "Hors frais" (vu sur les appartements Trior, hors périmètre ici mais le
+// parsing du signal doit fonctionner indépendamment du type de bien)
+const triorHorsFrais = construireAnnonce(
+    { fragments: ['2', '2', '113 m²', 'Nouveau', 'Evere', 'Penthouse à vendre', '485 000 €', 'Hors frais'], lien: 'https://immo.trior.be/fr/bien/a-vendre/appartement/1140-evere/7858777', source: 'Trior', dateExtraction: '' },
+    hintsDe('Trior'),
+);
+verifier('"Hors frais" détecté', triorHorsFrais.prixHorsFrais, true);
+verifier('prix quand même lu', triorHorsFrais.prix, 485000);
+
+verifier('parseCpEtVilleDepuisLien : cas nominal', parseCpEtVilleDepuisLien('https://immo.trior.be/fr/bien/a-vendre/maison/1470-genappe-bousval/7849701'), { cp: '1470', ville: 'Genappe' });
+verifier('parseCpEtVilleDepuisLien : lien sans CP', parseCpEtVilleDepuisLien('https://immo.trior.be/fr/qui-sommes-nous'), null);
+verifier('parseCpEtVilleDepuisLien : lien absent', parseCpEtVilleDepuisLien(null), null);
+
+console.log('\n== Fragments réels : Immoweb ==');
+
+// Prix et chambres dupliqués (texte lisible + version compacte pour le
+// tri/schema), unité "m²" séparée de sa valeur, PEB injecté depuis une image
+// par scrapper_immo.mjs (jamais dans le texte de la carte elle-même).
+const immoweb = construireAnnonce(
+    {
+        fragments: ['nouveau', '495 000 €', '495000€', 'Maison', '3 ch.', '3 chambres', '·', '265', 'm²', 'mètres carrés', '1410 Waterloo', 'Élégante maison familiale au cœur du Chenois', 'PEB E'],
+        lien: 'https://www.immoweb.be/fr/annonce/maison/a-vendre/waterloo/1410/21816034',
+        source: 'Immoweb',
+        dateExtraction: '',
+    },
+    hintsDe('Immoweb'),
+);
+verifier('prix (le premier des deux doublons)', immoweb.prix, 495000);
+verifier('chambres (malgré le doublon "3 ch."/"3 chambres")', immoweb.chambres, 3);
+verifier('"·" isolé neutralisé, "265"+"m²" recollés', immoweb.surfaceHabitable, 265);
+verifier('CP + ville en un seul fragment', [immoweb.cp, immoweb.ville], ['1410', 'Waterloo']);
+verifier('titre éditorial conservé (pas "mètres carrés")', immoweb.titre, 'Élégante maison familiale au cœur du Chenois');
+verifier('PEB depuis l\'image', immoweb.peb, 'E');
+verifier('dans le périmètre', immoweb.dansPerimetre, true);
+
+// Point médian COLLÉ à la valeur ("· 241"), deux surfaces sans libellé :
+// vérifié sur la vraie fiche, la première est bien l'habitable.
+const immowebClassified = construireAnnonce(
+    {
+        fragments: ['Maison', '350 000 €', '350000€', '3 ch.', '3 chambres', '· 241', 'm²', 'mètres carrés', '· 180', 'm²', 'mètres carrés', '1560 Hoeilaart', 'nouveau'],
+        lien: 'https://www.immoweb.be/fr/annonce/maison/a-vendre/hoeilaart/1560/21814051',
+        source: 'Immoweb',
+        dateExtraction: '',
+    },
+    hintsDe('Immoweb'),
+);
+verifier('"· 241" → 241 m² habitable', immowebClassified.surfaceHabitable, 241);
+verifier('"· 180" → 180 m² terrain', immowebClassified.surfaceTerrain, 180);
+verifier('pas de titre éditorial → titre fabriqué', immowebClassified.titre, 'Maison 3 ch. à Hoeilaart');
+verifier('Hoeilaart (1560) hors périmètre', immowebClassified.dansPerimetre, false);
+
+console.log('\n== Immoweb : exclusion des catégories hors maison ==');
+
+const exclusionImmoweb = SITES['www.immoweb.be'].lienExclusion;
+const casExclusion = [
+    ['appartement', 'https://www.immoweb.be/fr/annonce/appartement/a-vendre/la-hulpe/1310/21800000', true],
+    ['immeuble à appartements', 'https://www.immoweb.be/fr/annonce/immeuble-a-appartements/a-vendre/la-hulpe/1310/21800001', true],
+    ['immeuble mixte', 'https://www.immoweb.be/fr/annonce/immeuble-mixte/a-vendre/waterloo/1410/21800002', true],
+    ['penthouse', 'https://www.immoweb.be/fr/annonce/penthouse/a-vendre/waterloo/1410/21800003', true],
+    ['duplex', 'https://www.immoweb.be/fr/annonce/duplex/a-vendre/waterloo/1410/21800004', true],
+    ['triplex', 'https://www.immoweb.be/fr/annonce/triplex/a-vendre/waterloo/1410/21800005', true],
+    ['rez-de-chaussée', 'https://www.immoweb.be/fr/annonce/rez-de-chaussee/a-vendre/waterloo/1410/21800006', true],
+    ['studio', 'https://www.immoweb.be/fr/annonce/studio/a-vendre/waterloo/1410/21800007', true],
+    ['loft', 'https://www.immoweb.be/fr/annonce/loft/a-vendre/waterloo/1410/21800008', true],
+    ['maison (conservée)', 'https://www.immoweb.be/fr/annonce/maison/a-vendre/waterloo/1410/21800009', false],
+    ['villa (conservée)', 'https://www.immoweb.be/fr/annonce/villa/a-vendre/waterloo/1410/21800010', false],
+    ['maison-bel-étage (conservée)', 'https://www.immoweb.be/fr/annonce/maison-bel-etage/a-vendre/waterloo/1410/21800011', false],
+    ['bien exceptionnel (conservée)', 'https://www.immoweb.be/fr/annonce/bien-exceptionnel/a-vendre/waterloo/1410/21800012', false],
+];
+for (const [libelle, lien, doitExclure] of casExclusion) {
+    verifier(`exclusion "${libelle}"`, exclusionImmoweb.test(lien), doitExclure);
+}
+
+// Rejouer l'exemple réel signalé : un appartement titré par le texte de la
+// carte, dans une commune du périmètre (Woluwe-Saint-Lambert).
+const appartementSignale = construireAnnonce(
+    {
+        fragments: ['Appartement', '349 000 €', '349000€', '3 ch.', '3 chambres', '100', 'm²', 'mètres carrés', '1200 Woluwe-Saint-Lambert'],
+        lien: 'https://www.immoweb.be/fr/annonce/appartement/a-vendre/woluwe-saint-lambert/1200/21800099',
+        source: 'Immoweb',
+        dateExtraction: '',
+    },
+    hintsDe('Immoweb'),
+);
+verifier('classé Appartement par le texte', appartementSignale.typeBien, 'Appartement');
+verifier('lien exclu par lienExclusion', exclusionImmoweb.test(appartementSignale.lien), true);
+
+console.log('\n== Rente viagère ==');
+const viager = construireAnnonce(
+    {
+        fragments: ['Rente viagère', '150 000 € + 3 125 €/mois', '150000€ + 3125€ par mois', 'Bien exceptionnel', '6 ch.', '6 chambres', '1470 Genappe'],
+        lien: 'https://www.immoweb.be/fr/annonce/bien-exceptionnel/a-vendre/genappe/1470/21800020',
+        source: 'Immoweb',
+        dateExtraction: '',
+    },
+    hintsDe('Immoweb'),
+);
+verifier('rente viagère détectée', viager.venteViagere, true);
+verifier('prix lu = le bouquet, pas la mensualité', viager.prix, 150000);
+const nonViager = construireAnnonce(
+    { fragments: ['Maison', '350 000 €', '350000€', '3 ch.', '1410 Waterloo'], lien: 'https://www.immoweb.be/fr/annonce/maison/a-vendre/waterloo/1410/21800021', source: 'Immoweb', dateExtraction: '' },
+    hintsDe('Immoweb'),
+);
+verifier('vente classique non marquée', nonViager.venteViagere, false);
+
+console.log('\n== Immeuble mixte : classification (fuite constatée hors Immoweb) ==');
+
+// ERA place TOUT sous /maison/ dans ses URLs, y compris ses immeubles mixtes :
+// le repli sur l'URL classait ce bien à tort comme "Maison". Le texte, lui,
+// est explicite et est vérifié en premier.
+const eraImmeubleMixte = construireAnnonce(
+    {
+        fragments: ['1', '2', '3', '4', 'IMMEUBLE MIXTE A FORT POTENTIEL DE 250 M2', '€ 349 000', "Place de la Gare 2, 1420 Braine-l'Alleud", '3 chbre(s)', '215 m² de surf. hab.', '91 m² de surface de terrain', 'B'],
+        lien: "https://www.era.be/fr/a-vendre/braine-lalleud/maison/immeuble-mixte-a-fort-potentiel-de-250-m2",
+        source: 'ERA',
+        dateExtraction: '',
+    },
+    hintsDe('ERA'),
+);
+verifier('classé "Immeuble mixte", pas "Maison" via l\'URL', eraImmeubleMixte.typeBien, 'Immeuble mixte');
+
+// Immovlan : aucun mot de type reconnu jusqu'ici → typeBien restait null.
+const immovlanImmeubleMixte = construireAnnonce(
+    { fragments: ['475 000 €', 'Immeuble mixte à vendre', '1702', 'Grand-Bigard', '3 Chambre(s)', '364 m²', '1 Salle(s) de bain'], lien: 'https://immovlan.be/fr/detail/immeuble-mixte/a-vendre/1702/grand-bigard/x', source: 'Immovlan', dateExtraction: '' },
+    hintsDe('Immovlan'),
+);
+verifier('Immovlan : "Immeuble mixte" reconnu (plus null)', immovlanImmeubleMixte.typeBien, 'Immeuble mixte');
+
+// Une vraie maison ne doit jamais basculer vers "Immeuble mixte" au seul
+// prétexte qu'elle en mentionne un dans sa description.
+const maisonAvecMentionImmeuble = construireAnnonce(
+    { fragments: ['Maison', '1410 Waterloo', '350 000 €', '3 chambres', '150 m² habitable', 'à deux pas de l\'immeuble mixte du quartier'], lien: 'https://x.be/a', source: 'Test', dateExtraction: '' },
+    {},
+);
+verifier('"Maison" prioritaire malgré une mention incidente', maisonAvecMentionImmeuble.typeBien, 'Maison');
+
+// Style/pièce "loft" DANS une vraie maison : ne doit jamais être exclu.
+verifier('"Plain pied typé LOFT !" reste une Maison (pas testé comme Appartement)', parseTypeBien(['Plain pied typé LOFT', 'Maison']), 'Maison');
+
+console.log('\n== Filtre global hors-catégorie (parse_annonces.mjs) ==');
+verifier('"Appartement" dans la liste d\'exclusion', TYPES_EXCLUS_TEST.has('Appartement'), true);
+verifier('"Immeuble mixte" dans la liste d\'exclusion', TYPES_EXCLUS_TEST.has('Immeuble mixte'), true);
+verifier('"Maison" jamais exclue', TYPES_EXCLUS_TEST.has('Maison'), false);
 
 console.log('\n== Statuts et libellés ==');
 verifier('"Vendu"', parseStatut(['Vendu']), 'vendu');

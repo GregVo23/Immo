@@ -18,6 +18,28 @@ function hintsPour(source) {
     return entree?.hints ?? CONFIG_PAR_DEFAUT.hints;
 }
 
+/**
+ * Même règle d'exclusion de catégorie que scrapper_immo.mjs (voir
+ * SITES['www.immoweb.be'].lienExclusion), appliquée ici aux données DÉJÀ
+ * récoltées : corrige le fichier existant en un `npm run reparse`, sans
+ * attendre un nouveau scrape pour que le filtre prenne effet.
+ */
+function lienExclusionPour(source) {
+    const entree = Object.values(SITES).find((s) => s.source === source);
+    return entree?.lienExclusion ?? null;
+}
+
+/**
+ * Filtre PORTAIL-AGNOSTIQUE, en complément de lienExclusion (propre à
+ * Immoweb) : ERA, Immovlan et Trior laissent eux aussi passer des immeubles
+ * mixtes ou à appartements dans leur recherche "maison", constaté sur un
+ * scrape réel (4 Immovlan + 1 ERA + 3 Trior). On ne blackliste que les deux
+ * catégories que lib/parse.mjs sait reconnaître sans ambiguïté par le texte :
+ * pas "duplex"/"loft"/"studio", qui désignent parfois une pièce ou un style
+ * DANS une vraie maison ("Plain pied typé LOFT !") plutôt que le bien entier.
+ */
+export const TYPES_EXCLUS = new Set(['Appartement', 'Immeuble mixte']);
+
 export function parserToutesLesAnnonces() {
     if (!fs.existsSync(FICHIERS.brutes)) {
         console.error(`❌ ${FICHIERS.brutes} introuvable. Lance d'abord le scraper : npm start`);
@@ -37,7 +59,7 @@ export function parserToutesLesAnnonces() {
     // partir de » qui peut être très bas (un lot Trevi à 158 000 € pour une
     // recherche à 300-500 k€) et se retrouvait en tête du tri par prix/m².
     const prixPlancher = Math.round(CRITERES.prixMin * CRITERES.prixMinTolerance);
-    const rejets = { vendus: [], horsPerimetre: [], horsBudget: [], sansPrix: [] };
+    const rejets = { vendus: [], horsCategorie: [], horsPerimetre: [], horsBudget: [], sansPrix: [] };
 
     const retenues = parsees.filter((a) => {
         // Les portails laissent les biens vendus dans leurs résultats de
@@ -46,6 +68,21 @@ export function parserToutesLesAnnonces() {
         // disparaissant de la carte une fois la vente conclue).
         if (a.statut === 'vendu') {
             rejets.vendus.push(a);
+            return false;
+        }
+        // Catégorie hors périmètre (appartement, immeuble mixte...) malgré une
+        // recherche filtrée sur "maison" — voir le commentaire de lienExclusion.
+        const exclusion = lienExclusionPour(a.source);
+        if (exclusion && exclusion.test(a.lien ?? '')) {
+            rejets.horsCategorie.push(a);
+            return false;
+        }
+        // Même chose, mais par le type reconnu dans le texte plutôt que
+        // l'URL : couvre les portails qui n'ont pas de lienExclusion dédié
+        // (ERA, Immovlan, Trior classent aussi des immeubles à appartements
+        // sous leur propre recherche "maison").
+        if (a.typeBien && TYPES_EXCLUS.has(a.typeBien)) {
+            rejets.horsCategorie.push(a);
             return false;
         }
         if (!a.dansPerimetre) {
@@ -92,6 +129,7 @@ export function parserToutesLesAnnonces() {
     console.log(`  par portail            : ${Object.entries(parSource).map(([s, n]) => `${s} ${n}`).join(', ') || '—'}`);
     console.log('');
     console.log(`Écartées déjà vendues    : ${rejets.vendus.length}`);
+    if (rejets.horsCategorie.length) console.log(`Écartées hors catégorie  : ${rejets.horsCategorie.length}  (appartement, immeuble mixte...)`);
     console.log(`Écartées hors périmètre  : ${rejets.horsPerimetre.length}`);
     console.log(`Écartées hors budget     : ${rejets.horsBudget.length}  (hors ${prixPlancher.toLocaleString('fr-BE')} – ${prixPlafond.toLocaleString('fr-BE')} €)`);
     console.log('');

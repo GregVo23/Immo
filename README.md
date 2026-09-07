@@ -1,15 +1,16 @@
 # Recherche immobilière — Brabant wallon & périphérie flamande
 
-Agrège les annonces de 5 portails (Immovlan, ERA, Century21, Trevi, Zimmo), les
-nettoie, les déduplique et génère un dashboard HTML autonome.
+Agrège les annonces de 7 portails (Immoweb, Immovlan, ERA, Century21, Trevi,
+Zimmo, Trior), les nettoie, les déduplique et génère un dashboard HTML
+autonome.
 
 ## Utilisation
 
 ```bash
-npm start         # scrape les 5 portails + parse → annonces.json
+npm start         # scrape les 7 portails + parse → annonces.json
 npm run reparse   # re-parse SANS re-scraper      → annonces.json
 npm run dashboard # génère dashboard.html
-npm test          # tests du parsing (123 cas)
+npm test          # tests du parsing (155 cas)
 npm run all       # scrape + dashboard
 ```
 
@@ -154,6 +155,33 @@ réel est pire qu'afficher un doublon. Elles portent un badge « annonce jumelle
 - **`tagName` des éléments SVG est en minuscules** (`"svg"`, `"style"`),
   contrairement aux éléments HTML. Sans `toUpperCase()`, le CSS interne des
   icônes et des blobs JPEG binaires entraient dans les données.
+- **Trior n'a pas d'URL de recherche filtrable** : son formulaire soumet en
+  `POST` (style ASP.NET). `scrapper_immo.mjs` le pilote directement (catégorie
+  « Maison » + sélection multiple des codes postaux du périmètre, valeur =
+  CP) plutôt que de construire un lien.
+- **Le code postal Trior n'est nulle part dans le texte de la carte**
+  (« Waterloo » seul, jamais « 1410 Waterloo ») — seulement dans l'URL de
+  l'annonce (`.../maison/1410-waterloo/7854102`). `parseCpEtVilleDepuisLien`
+  sert de repli.
+- **Terrain en ares** : Trior affiche un entier nu juste après la surface
+  habitable (« 340 m² » puis « 8 ») qui vaut le terrain en ares (1 are =
+  100 m²) — une convention belge absente des 5 autres portails.
+- **Immoweb duplique chaque fait en deux fragments** : un prix lisible
+  (« 495 000 € ») et sa version compacte (« 495000€ »), des chambres en toutes
+  lettres et en abrégé (« 3 chambres » / « 3 ch. »), une unité répétée pour
+  l'accessibilité (« mètres carrés » après « m² »). Sans le filtre dédié,
+  « mètres carrés » (13 caractères, pas de chiffre, pas de €) passait pour un
+  titre valable.
+- **Immoweb sépare ses faits par un point médian décoratif** (`·`), tantôt en
+  fragment isolé, tantôt collé à la valeur (`"· 241"`) — les deux cas sont
+  nettoyés avant tout traitement, sinon `"· 241"` ne se recollait pas avec le
+  `"m²"` qui suit.
+- **Le PEB d'Immoweb est une icône, pas du texte** (`peb_e.png`) : lu depuis
+  les URLs d'image et injecté comme un fragment `"PEB E"` ordinaire.
+- **Le filtre d'Immoweb n'est pas strict côté serveur** : une fois les
+  résultats exacts épuisés, il complète avec des biens proches hors périmètre
+  ou légèrement hors budget (~16 % de l'échantillon sondé). Sans conséquence :
+  le filtre de `parse_annonces.mjs` les écarte comme n'importe quel portail.
 - **Immovlan bloque le headless historique** (« You were blocked from &lt;ip&gt; »),
   même avec un User-Agent réaliste. `channel: 'chromium'` dans les
   `launchOptions` sélectionne le moteur headless récent, qui passe — ce qui

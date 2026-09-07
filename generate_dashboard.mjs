@@ -45,6 +45,7 @@ const GARES = [
     { nom: 'Rixensart', lat: 50.7186, lon: 4.5236 },
     { nom: 'Genval', lat: 50.7108, lon: 4.5069 },
     { nom: 'Genappe', lat: 50.6136, lon: 4.4519 },
+    { nom: 'Villers-la-Ville', lat: 50.5973, lon: 4.5217 },
     { nom: 'Vilvoorde', lat: 50.9275, lon: 4.4239 },
     { nom: 'Zaventem', lat: 50.8694, lon: 4.4728 },
     { nom: 'Asse', lat: 50.9058, lon: 4.2003 },
@@ -574,7 +575,8 @@ tbody tr:hover { background: var(--page); }
       </select>
     </div>
     <label class="case"><input type="checkbox" id="favOnly"> Favoris seulement</label>
-    <label class="case"><input type="checkbox" id="masquerOptions"> Masquer les biens sous option</label>
+    <label class="case"><input type="checkbox" id="masquerOptions" checked> Masquer les biens sous option</label>
+    <label class="case"><input type="checkbox" id="prixConnuSeulement" checked> Prix connu uniquement</label>
     <label class="case"><input type="checkbox" id="masquerIncertains"> Masquer les données incertaines</label>
     <button id="btnReset">Réinitialiser</button>
   </div>
@@ -958,11 +960,16 @@ function filtrer(ignorerCommune = false) {
   const gareMax = parseFloat($('gareMax').value) || Infinity;
   const favOnly = $('favOnly').checked;
   const masquerOptions = $('masquerOptions').checked;
+  const prixConnuSeulement = $('prixConnuSeulement').checked;
   const masquerIncertains = $('masquerIncertains').checked;
 
   return ANNONCES.filter(a => {
     if (favOnly && !favoris.includes(a.lien)) return false;
     if (masquerOptions && a.statut !== 'disponible') return false;
+    // Certains portails (Trior sous option, notamment) n'affichent aucun prix
+    // sur une bonne partie de leurs biens : ce filtre les écarte sans se
+    // confondre avec "masquerIncertains", plus large (surface, chambres...).
+    if (prixConnuSeulement && a.prix == null) return false;
     if (!ignorerCommune && commune !== '*' && a.commune !== commune) return false;
     if (source !== '*' && !(a.sources ?? [a.source]).includes(source)) return false;
     if (masquerIncertains && a.champsManquants?.length) return false;
@@ -1002,6 +1009,11 @@ function badgesDe(a, note) {
   if (a.prixModifie) out.push('<span class="badge info" title="Le portail signale un changement de prix depuis la mise en ligne">📉 Prix modifié</span>');
   // Prix de départ d'un projet neuf : le montant affiché n'est pas ferme.
   if (a.prixAPartirDe) out.push('<span class="badge incertain" title="Prix « à partir de » : montant de départ, pas un prix ferme">◍ Prix de départ</span>');
+  // Trior (appartements neufs) : le montant exclut des frais, pas comparable tel quel.
+  if (a.prixHorsFrais) out.push('<span class="badge incertain" title="Prix hors frais (agence ou notaire) : non comparable tel quel">◍ Hors frais</span>');
+  // Rente viagère (Immoweb) : le montant affiché n'est que le bouquet initial,
+  // pas le coût réel (bouquet + mensualité jusqu'au décès du vendeur).
+  if (a.venteViagere) out.push('<span class="badge incertain" title="Vente en rente viagère : prix affiché = bouquet initial uniquement, hors mensualité">◍ Rente viagère</span>');
   if (a.statut === 'option') out.push('<span class="badge avertissement">⏳ Sous option</span>');
   if (a.statut === 'reserve') out.push('<span class="badge avertissement">⏳ Réservé</span>');
   // Une annonce ancienne signale une marge de négociation.
@@ -1196,14 +1208,16 @@ function rendre() {
 /* ------------------------------------------------------------
    Écoute des filtres
    ------------------------------------------------------------ */
-for (const id of ['q', 'commune', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'masquerIncertains']) {
+for (const id of ['q', 'commune', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains']) {
   $(id).addEventListener('input', rendre);
   $(id).addEventListener('change', rendre);
 }
 $('btnReset').onclick = () => {
   for (const id of ['q', 'prixMax', 'prixM2Max', 'gareMax']) $(id).value = '';
   $('commune').value = '*'; $('source').value = '*'; $('chMin').value = '0'; $('tri').value = 'score';
-  $('favOnly').checked = false; $('masquerOptions').checked = false; $('masquerIncertains').checked = false;
+  // "Masquer les biens sous option" et "Prix connu uniquement" sont cochées
+  // par défaut : le réinitialiser doit y revenir, pas les décocher.
+  $('favOnly').checked = false; $('masquerOptions').checked = true; $('prixConnuSeulement').checked = true; $('masquerIncertains').checked = false;
   rendre();
 };
 

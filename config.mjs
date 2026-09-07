@@ -44,7 +44,15 @@ export const COMMUNES_CIBLES = {
     Waterloo: [1410],
     "Braine-l'Alleud": [1420, 1421, 1428], // + Ophain-BSI, Lillois-Witterzée
     Genappe: [1470, 1471, 1472, 1473, 1474], // Bousval, Loupoigne, Vieux-Genappe, Glabais, Ways
+    'Villers-la-Ville': [1495], // + Marbais, Mellery, Sart-Dames-Avelines, Tilly. Gare propre, ligne Ottignies-Charleroi
     Tubize: [1480], // gare directe vers Bruxelles-Midi (ligne 96/50A)
+    // Communes bruxelloises limitrophes du Brabant wallon, sur ou près de la
+    // ligne Bruxelles-Namur/Luxembourg (gares Etterbeek, Watermael, Boitsfort
+    // déjà dans GARES, voir generate_dashboard.mjs).
+    'Woluwe-Saint-Lambert': [1200],
+    'Woluwe-Saint-Pierre': [1150],
+    Auderghem: [1160],
+    'Watermael-Boitsfort': [1170], // gares Watermael et Boitsfort dans la commune même
     Dilbeek: [1700, 1701, 1702, 1703], // + Itterbeek, Groot-Bijgaarden, Schepdaal
     Asse: [1730, 1731], // + Zellik, Relegem
     Ternat: [1740, 1741, 1742], // + Wambeek, Sint-Katherina-Lombeek
@@ -97,9 +105,66 @@ export const CRITERES = {
        1 chambre et 30 salles de bain sur toutes les annonces Century21.
      - pebNu : le certificat énergétique apparaît en lettre seule ("B"),
        sans le libellé "PEB"
+     - cpDansLien : le code postal n'apparaît nulle part dans le texte de la
+       carte (juste "Waterloo", jamais "1410 Waterloo") — seulement dans
+       l'URL de l'annonce (".../1410-waterloo/..."). lib/parse.mjs bascule
+       sur ce repli quand le texte n'en fournit pas.
+     - terrainAresApresSurface : un entier nu qui suit directement la surface
+       ("340 m²" puis "8") est la surface du terrain, exprimée en ares
+       (1 are = 100 m²) — convention belge courante, jamais vue ailleurs
+       dans nos 5 autres portails.
    ============================================================ */
 
 export const SITES = {
+    'www.immoweb.be': {
+        source: 'Immoweb',
+        // Deux gabarits de carte coexistent (biens "premium" et biens
+        // standards, classes CSS différentes : "xl-card--result" vs
+        // "card--list-classified"), mais les deux partagent l'ancêtre
+        // <article class="card ...">, qui porte aussi l'image.
+        cardSelector: 'article.card',
+        cookieButtonRegex: /accepter/i,
+        lienPattern: '/fr/annonce/',
+        // La recherche "/recherche/maison/a-vendre" n'est PAS stricte : une
+        // fois les résultats exacts épuisés, Immoweb complète avec d'autres
+        // catégories (appartements, immeubles mixtes...). Constaté sur un
+        // scrape réel : 331 des 1192 cartes récoltées (28 %) n'étaient pas
+        // des maisons. On exclut ces catégories dès la récolte, par le
+        // segment de type dans l'URL de l'annonce — plus fiable que de
+        // deviner depuis un texte de carte qui ne les nomme pas toujours
+        // clairement (aucune des règles de lib/parse.mjs::TYPES_BIEN ne
+        // reconnaît "duplex", "penthouse", "studio", etc.).
+        lienExclusion: /\/fr\/annonce\/(appartement|immeuble-a-appartements|immeuble-mixte|penthouse|duplex|triplex|rez-de-chaussee|studio|loft|appartement-de-service)\//i,
+        paginationParam: 'page',
+        paginationStart: 1,
+        // Inventaire de loin le plus grand des 6 portails (~970 résultats sur
+        // le périmètre avant filtrage) : 60 par page, jusqu'à ~17 pages.
+        maxPages: 20,
+        // Tout le reste (prix, surfaces, chambres, "1410 Waterloo") suit les
+        // conventions déjà gérées nativement, sans hint dédié.
+        hints: {},
+    },
+    'immo.trior.be': {
+        source: 'Trior',
+        cardSelector: 'div.estate-list__item',
+        cookieButtonRegex: /accepter/i,
+        // Restreint aussi aux maisons si jamais le filtre de formulaire
+        // (voir scrapper_immo.mjs) échouait silencieusement : une carte
+        // appartement n'a que son propre lien /appartement/, donc elle est
+        // ignorée par recolterCartes() faute de correspondance.
+        lienPattern: '/fr/bien/a-vendre/maison/',
+        // Pas de query string : le site filtre via un <form method="post">.
+        // scrapper_immo.mjs pilote ce formulaire (catégorie + codes postaux)
+        // avant l'extraction, au lieu d'empiler des pages par URL.
+        paginationParam: null,
+        // Structure : "5" | "3" | "340 m²" | "8" | "Court-Saint-Etienne" |
+        //             "Bien exceptionnel à vendre" | "1 850 000 €"
+        hints: {
+            bareStats: { position: 'avant-surface', champs: ['chambres', 'sallesDeBain'] },
+            cpDansLien: true,
+            terrainAresApresSurface: true,
+        },
+    },
     'immovlan.be': {
         source: 'Immovlan',
         // La carte est l'<article> : il porte l'image, alors que
@@ -223,8 +288,36 @@ function urlImmovlan() {
     return `https://immovlan.be/fr/immobilier/maison?${p.toString().replace(/%2C/g, ',')}`;
 }
 
+/**
+ * Paramètres confirmés par sondage :
+ *   postalCodes=BE-1300,BE-1310,...  liste préfixée "BE-", virgules brutes.
+ *   priceType=SALE_PRICE, minPrice/maxPrice, minBedroomCount   confirmés.
+ *   page=N   60 résultats par page.
+ * ⚠️ Le filtre n'est pas strict côté serveur : Immoweb complète avec des
+ * biens proches hors périmètre ou légèrement hors budget une fois les
+ * résultats exacts épuisés (~16 % de l'échantillon sondé). Sans conséquence :
+ * le filtre de périmètre/budget de parse_annonces.mjs les écarte comme pour
+ * n'importe quel autre portail.
+ */
+function urlImmoweb() {
+    const p = new URLSearchParams({
+        countries: 'BE',
+        postalCodes: TOUS_LES_CP.map((cp) => `BE-${cp}`).join(','),
+        priceType: 'SALE_PRICE',
+        minPrice: String(CRITERES.prixMin),
+        maxPrice: String(CRITERES.prixMax),
+        minBedroomCount: String(CRITERES.chambresMin),
+    });
+    return `https://www.immoweb.be/fr/recherche/maison/a-vendre?${p.toString().replace(/%2C/g, ',')}`;
+}
+
 export const URLS = [
+    urlImmoweb(),
     urlImmovlan(),
+
+    // Trior : simple page de départ, le filtrage (catégorie + codes postaux)
+    // se fait en pilotant son formulaire — voir scrapper_immo.mjs.
+    'https://immo.trior.be/fr/2/chercher-bien/a-vendre',
 
     'https://www.era.be/fr/a-vendre?filter%5Bproperty_type%5D=46&filter%5Bprice%5D=%28min%3A300000%3Bmax%3A500000%29&filter%5Bamount_bedrooms%5D=%28min%3A2%3Bmax%3A%29&filter%5Blocation%5D%5Bmunicipalities%5D=686+234+340+543+444+591+555+687+708+668+183+642+469+279+287&filter%5Blocation%5D%5Bsub_municipalities%5D=1733+2078+821+974+1318+1531+1768+2602+2723+844+957+1909+2508+1300+2264+1026+1735+1769+2108+896+1734+2018+2420+2469+2153+862+1623+1903+2215+2810+2394+2689+1552+2732+1373+1560+2343+2409+2421',
 

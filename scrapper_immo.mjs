@@ -1,18 +1,18 @@
 /**
- * Récolte des annonces sur les 4 portails.
+ * Récolte des annonces sur les 6 portails.
  *
  * Principe : le navigateur ne fait QUE ramasser du texte brut (fragments,
  * lien, image). Aucun parsing ici. Tout est écrit dans annonces-brutes.json,
  * puis parsé en Node par lib/parse.mjs.
  *
- * Pourquoi : corriger une regex ne demande plus de re-scraper les 4 sites
+ * Pourquoi : corriger une regex ne demande plus de re-scraper les 6 sites
  * (~10 min et du trafic inutile). Il suffit de relancer `npm run reparse`.
  */
 
 import './lib/racine.mjs'; // doit rester en premier : fixe le dossier de travail
 import fs from 'fs';
 import { PlaywrightCrawler, Dataset } from '@crawlee/playwright';
-import { URLS, FICHIERS, getSiteConfig } from './config.mjs';
+import { URLS, FICHIERS, getSiteConfig, TOUS_LES_CP } from './config.mjs';
 import { parserToutesLesAnnonces } from './parse_annonces.mjs';
 
 /**
@@ -44,7 +44,7 @@ async function autoScroll(page, log, { maxScrolls = 60, stableThreshold = 4, wai
  * Récolte navigateur. Exécutée dans la page, donc sans accès aux imports :
  * tout ce dont elle a besoin est passé en argument sérialisable.
  */
-function recolterCartes({ selector, source, lienPattern }) {
+function recolterCartes({ selector, source, lienPattern, lienExclusion }) {
     const TAGS_IGNORES = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'PATH', 'TEMPLATE', 'DEFS', 'SYMBOL', 'USE', 'IFRAME', 'CANVAS']);
 
     /** Texte de chaque nœud, dans l'ordre du DOM, sans le bruit technique. */
@@ -132,6 +132,10 @@ function recolterCartes({ selector, source, lienPattern }) {
             lien = cible?.href ?? null;
         }
         if (!lien) continue;
+        // Catégorie hors périmètre (appartement, immeuble mixte...) : on ne
+        // récolte même pas la carte, ça évite du travail pour rien en plus
+        // d'écarter le bien.
+        if (lienExclusion && lienExclusion.test(lien)) continue;
 
         // Dédup intra-page : sur Century21 chaque photo du carrousel est un <a>
         // vers l'annonce, d'où ~30 doublons par bien si on ne filtre pas.
@@ -141,6 +145,19 @@ function recolterCartes({ selector, source, lienPattern }) {
 
         const fragments = fragmentsDe(carte);
         if (!fragments.length) continue;
+
+        // Immoweb encode le PEB dans une icône ("peb_e.png") plutôt qu'en
+        // texte : aucun fragment ne le porte. On le lit dans les URLs
+        // d'image et on l'injecte comme un fragment "PEB E" ordinaire, que
+        // lib/parse.mjs sait déjà reconnaître (parsePeb).
+        for (const img of carte.querySelectorAll('img')) {
+            const src = img.getAttribute('src') || img.getAttribute('data-src') || '';
+            const m = src.match(/peb[_-]?([a-g])\b/i);
+            if (m) {
+                fragments.push(`PEB ${m[1].toUpperCase()}`);
+                break;
+            }
+        }
 
         resultats.push({
             fragments,
@@ -187,6 +204,48 @@ async function ecrireDebug(page, config, log) {
     log.warning('🐛 Le sélecteur doit viser le CONTENEUR de la carte, pas un lien interne.');
 }
 
+/**
+ * Trior ne propose pas de filtre par URL : sa recherche est un <form
+ * method="post"> (catégorie + <select multiple> de villes, valeur = code
+ * postal). On pilote donc le formulaire au lieu de construire un lien.
+ *
+ * Sans ce filtre, la page ne montre que les toutes dernières annonces tous
+ * types confondus (maisons, appartements, terrains...) au lieu du périmètre
+ * voulu — `lienPattern: '/maison/'` ferait bien retomber sur des cartes
+ * hors zone, mais en bien plus petit nombre.
+ */
+async function filtrerTrior(page, log) {
+    const categorie = await page.$('select[name="SelectedCategory"]');
+    const villes = await page.$('select[name="SelectedCities"]');
+    if (!categorie || !villes) {
+        log.warning('⚠️ Formulaire de recherche Trior introuvable : récolte non filtrée (site probablement modifié).');
+        return;
+    }
+
+    // Seuls les CP effectivement proposés par le site peuvent être sélectionnés
+    // dans le <select> ; le mapper évite une erreur si un CP du périmètre y est absent.
+    const disponibles = await page.evaluate((cps) => {
+        const options = [...document.querySelector('select[name="SelectedCities"]').options].map((o) => o.value);
+        return cps.filter((cp) => options.includes(cp));
+    }, TOUS_LES_CP.map(String));
+
+    if (!disponibles.length) {
+        log.warning('⚠️ Aucun code postal du périmètre reconnu par le formulaire Trior.');
+        return;
+    }
+
+    await page.selectOption('select[name="SelectedCategory"]', '1'); // 1 = Maison
+    await page.selectOption('select[name="SelectedCities"]', disponibles);
+
+    await Promise.all([
+        page.waitForResponse((r) => r.url().includes('chercher-bien'), { timeout: 15000 }).catch(() => null),
+        page.click('button[type="submit"]'),
+    ]);
+    await page.waitForTimeout(1500);
+
+    log.info(`🔎 Trior filtré : Maison, ${disponibles.length}/${TOUS_LES_CP.length} codes postaux du périmètre.`);
+}
+
 const crawler = new PlaywrightCrawler({
     headless: true,
     requestHandlerTimeoutSecs: 180,
@@ -226,6 +285,11 @@ const crawler = new PlaywrightCrawler({
             log.info('ℹ️ Pas de bannière de cookies.');
         }
 
+        // 1 bis. Trior : pas d'URL filtrée, on pilote son formulaire de recherche.
+        if (config.source === 'Trior') {
+            await filtrerTrior(page, log);
+        }
+
         // 2. Attente des cartes puis scroll adaptatif
         try {
             await page.waitForSelector(config.cardSelector, { timeout: 15000 });
@@ -241,6 +305,9 @@ const crawler = new PlaywrightCrawler({
             selector: config.cardSelector,
             source: config.source,
             lienPattern: config.lienPattern ?? null,
+            // RegExp traverse la frontière page.evaluate() nativement (types
+            // sérialisables de Playwright), pas besoin de la recomposer ici.
+            lienExclusion: config.lienExclusion ?? null,
         });
 
         log.info(`🎉 ${cartes.length} cartes récoltées (${config.source}).`);
