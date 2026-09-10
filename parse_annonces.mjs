@@ -9,8 +9,11 @@
 import './lib/racine.mjs'; // doit rester en premier : fixe le dossier de travail
 import fs from 'fs';
 import { pathToFileURL } from 'url';
-import { FICHIERS, SITES, CRITERES, CONFIG_PAR_DEFAUT } from './config.mjs';
+import { FICHIERS, SITES, CRITERES, CONFIG_PAR_DEFAUT, HISTORIQUE } from './config.mjs';
 import { construireAnnonce, dedupliquer } from './lib/parse.mjs';
+import { chargerHistorique, ecrireHistorique, rafraichirEntrees, enrichirAnnonces, calculerDisparitions } from './lib/historique.mjs';
+
+const euro = (n) => (n == null ? '—' : n.toLocaleString('fr-BE') + ' €');
 
 /** Retrouve les hints d'un site à partir du nom de source enregistré. */
 function hintsPour(source) {
@@ -111,6 +114,25 @@ export function parserToutesLesAnnonces() {
         a.auDessusDuBudget = a.prix != null && a.prix > CRITERES.prixMax;
     }
 
+    /* --- Historique : nouveautés, baisses de prix, disparitions ----------- */
+
+    const maintenant = new Date().toISOString();
+    const { donnees: ancienneDonnees, premierRun } = chargerHistorique(FICHIERS.historique);
+
+    // Étape 1 : rafraîchir avec le prix propre à CHAQUE annonce individuelle
+    // (avant fusion), la seule source fiable pour détecter une vraie baisse.
+    const historiqueRafraichi = rafraichirEntrees(retenues, ancienneDonnees, maintenant);
+
+    // Étape 2 : signaler nouveau/baisseDePrix sur les annonces FUSIONNÉES, en
+    // comparant à l'historique D'AVANT ce run (pas celui déjà rafraîchi).
+    enrichirAnnonces(annonces, ancienneDonnees, premierRun);
+
+    // Étape 3 : détecter les disparitions et purger les plus anciennes.
+    const { disparus, historiqueFinal } = calculerDisparitions(historiqueRafraichi, retenues, maintenant, HISTORIQUE);
+
+    ecrireHistorique(FICHIERS.historique, historiqueFinal);
+    fs.writeFileSync(FICHIERS.disparus, JSON.stringify(disparus, null, 2));
+
     annonces.sort((a, b) => (a.prixM2 ?? Infinity) - (b.prixM2 ?? Infinity));
 
     fs.writeFileSync(FICHIERS.annonces, JSON.stringify(annonces, null, 2));
@@ -161,6 +183,26 @@ export function parserToutesLesAnnonces() {
     const sousOption = annonces.filter((a) => a.statut === 'option' || a.statut === 'reserve');
     if (sousOption.length) {
         console.log(`\n⏳ ${sousOption.length} bien(s) sous option ou réservés — conservés (une option échoue souvent) et signalés dans le dashboard.`);
+    }
+
+    /* --- Historique --------------------------------------------------------- */
+
+    if (premierRun) {
+        console.log(`\n📋 Premier historique constitué (${annonces.length} biens). Les prochains runs détecteront nouveautés, baisses de prix et disparitions.`);
+    } else {
+        const nouveaux = annonces.filter((a) => a.nouveau);
+        const baisses = annonces.filter((a) => a.baisseDePrix);
+        console.log('\n📈 HISTORIQUE');
+        console.log(`  🆕 ${nouveaux.length} nouveau(x) bien(s) depuis le dernier scrape.`);
+        for (const a of nouveaux.slice(0, 5)) console.log(`     ${a.commune ?? '?'} — ${euro(a.prix)} — ${a.titre.slice(0, 45)}`);
+        if (baisses.length) {
+            console.log(`  📉 ${baisses.length} bien(s) ont baissé de prix.`);
+            for (const a of baisses.slice(0, 5)) console.log(`     ${a.commune ?? '?'} — ${euro(a.baisseDePrix.ancienPrix)} → ${euro(a.baisseDePrix.nouveauPrix)} — ${a.titre.slice(0, 35)}`);
+        }
+        if (disparus.length) {
+            console.log(`  ❌ ${disparus.length} bien(s) disparu(s) depuis ${HISTORIQUE.joursAvantDisparu}+ jours (vendu ou retiré probable).`);
+            for (const d of disparus.slice(0, 5)) console.log(`     ${d.commune ?? '?'} — ${euro(d.prixActuel)} — ${d.titre.slice(0, 40)} (absent depuis ${d.joursAbsence} j)`);
+        }
     }
 
     const avecAnciennete = annonces.filter((a) => a.joursEnLigne != null);

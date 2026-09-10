@@ -198,6 +198,10 @@ if (!fs.existsSync(FICHIERS.annonces)) {
 }
 
 const annoncesBrutes = JSON.parse(fs.readFileSync(FICHIERS.annonces, 'utf-8'));
+
+// Optionnel : absent au tout premier run (aucun bien n'a encore pu disparaître).
+const disparus = fs.existsSync(FICHIERS.disparus) ? JSON.parse(fs.readFileSync(FICHIERS.disparus, 'utf-8')) : [];
+
 console.log(`📍 Géocodage de ${annoncesBrutes.length} biens (1 req/s pour les adresses non mises en cache)...`);
 
 const cache = chargerCache();
@@ -416,6 +420,16 @@ button[aria-pressed="true"] { background: var(--series-1); border-color: var(--s
 .barre-ligne .compte { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text-primary); text-align: right; }
 .axe { border-top: 1px solid var(--baseline); margin-top: 10px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
+/* ---------- Biens disparus ---------- */
+.liste-disparus { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.ligne-disparu { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 8px 12px; background: var(--surface); font-size: 12px; }
+.ligne-disparu .titre { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ligne-disparu .lieu { color: var(--text-muted); }
+.ligne-disparu .prix { font-variant-numeric: tabular-nums; color: var(--text-secondary); white-space: nowrap; }
+.ligne-disparu .depuis { color: var(--text-muted); white-space: nowrap; }
+.ligne-disparu a { color: var(--series-1); text-decoration: none; font-weight: 600; }
+.ligne-disparu a:hover { text-decoration: underline; }
+
 /* ---------- Grille de biens ---------- */
 .grille { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; }
 .bien { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
@@ -572,12 +586,14 @@ tbody tr:hover { background: var(--page); }
         <option value="prix">Prix croissant</option>
         <option value="gare">Distance gare croissante</option>
         <option value="surface">Surface décroissante</option>
+        <option value="recent">Plus récents d'abord</option>
       </select>
     </div>
     <label class="case"><input type="checkbox" id="favOnly"> Favoris seulement</label>
     <label class="case"><input type="checkbox" id="masquerOptions" checked> Masquer les biens sous option</label>
     <label class="case"><input type="checkbox" id="prixConnuSeulement" checked> Prix connu uniquement</label>
     <label class="case"><input type="checkbox" id="masquerIncertains"> Masquer les données incertaines</label>
+    <label class="case"><input type="checkbox" id="nouveautesSeulement"> Nouveautés seulement</label>
     <button id="btnReset">Réinitialiser</button>
   </div>
 
@@ -602,6 +618,12 @@ tbody tr:hover { background: var(--page); }
     <p class="legende-bloc">Sur la sélection courante. Clique une commune pour filtrer.</p>
     <div class="barres" id="barresCommunes"></div>
     <div class="axe" id="axeCommunes"></div>
+  </details>
+
+  <details class="carte-plane bloc-graphe" id="blocDisparus">
+    <summary id="titreDisparus">Récemment disparus</summary>
+    <p class="legende-bloc">Absents du dernier scrape depuis au moins quelques jours (probablement vendus ou retirés) — le lien peut ne plus fonctionner.</p>
+    <div id="listeDisparus" class="liste-disparus"></div>
   </details>
 
   <div id="grille" class="grille"></div>
@@ -652,6 +674,7 @@ tbody tr:hover { background: var(--page); }
 
 <script>
 const ANNONCES = ${JSON.stringify(annonces)};
+const DISPARUS = ${JSON.stringify(disparus)};
 const GARES = ${JSON.stringify(GARES)};
 const ACCES_AUTOROUTE = ${JSON.stringify(ACCES_AUTOROUTE)};
 
@@ -789,6 +812,10 @@ for (const [nom, id] of Object.entries(BOUTONS_VUE)) $(id).onclick = () => chois
 // Bloc « Biens par commune » repliable, état mémorisé.
 $('blocCommunes').open = lire('immo_communes_ouvert', true);
 $('blocCommunes').addEventListener('toggle', () => ecrire('immo_communes_ouvert', $('blocCommunes').open));
+
+// « Récemment disparus » : replié par défaut (info secondaire), état mémorisé.
+$('blocDisparus').open = lire('immo_disparus_ouvert', false);
+$('blocDisparus').addEventListener('toggle', () => ecrire('immo_disparus_ouvert', $('blocDisparus').open));
 
 const vueMemorisee = lire('immo_vue', null);
 if (vueMemorisee && BOUTONS_VUE[vueMemorisee]) vue = vueMemorisee;
@@ -962,6 +989,7 @@ function filtrer(ignorerCommune = false) {
   const masquerOptions = $('masquerOptions').checked;
   const prixConnuSeulement = $('prixConnuSeulement').checked;
   const masquerIncertains = $('masquerIncertains').checked;
+  const nouveautesSeulement = $('nouveautesSeulement').checked;
 
   return ANNONCES.filter(a => {
     if (favOnly && !favoris.includes(a.lien)) return false;
@@ -970,6 +998,7 @@ function filtrer(ignorerCommune = false) {
     // sur une bonne partie de leurs biens : ce filtre les écarte sans se
     // confondre avec "masquerIncertains", plus large (surface, chambres...).
     if (prixConnuSeulement && a.prix == null) return false;
+    if (nouveautesSeulement && !a.nouveau) return false;
     if (!ignorerCommune && commune !== '*' && a.commune !== commune) return false;
     if (source !== '*' && !(a.sources ?? [a.source]).includes(source)) return false;
     if (masquerIncertains && a.champsManquants?.length) return false;
@@ -997,14 +1026,27 @@ function trier(liste, notes) {
   if (cle === 'prix')    copie.sort((a, b) => inf(a.prix) - inf(b.prix));
   if (cle === 'gare')    copie.sort((a, b) => inf(a.distanceGareKm) - inf(b.distanceGareKm));
   if (cle === 'surface') copie.sort((a, b) => (b.surfaceHabitable ?? -1) - (a.surfaceHabitable ?? -1));
+  // Biens sans date connue (vus avant la mise en place du suivi, ou premier
+  // run) : repli sur l'époque Unix (1970), la plus ancienne possible, pour
+  // qu'ils se retrouvent en fin de liste plutôt qu'en tête d'un tri décroissant.
+  if (cle === 'recent') copie.sort((a, b) => new Date(b.premiereFoisVu ?? 0) - new Date(a.premiereFoisVu ?? 0));
   return copie;
 }
 
 /* ------------------------------------------------------------
    Rendu
    ------------------------------------------------------------ */
+const formaterDate = (iso) => (iso ? new Date(iso).toLocaleDateString('fr-BE') : '');
+
 function badgesDe(a, note) {
   const out = [];
+  // Nouveau et baisse de prix viennent de historique.json (voir lib/historique.mjs) :
+  // absents au tout premier run, faute de scrape antérieur pour comparer.
+  if (a.nouveau) out.push('<span class="badge bon">🆕 Nouveau</span>');
+  if (a.baisseDePrix) {
+    const delta = a.baisseDePrix.ancienPrix - a.baisseDePrix.nouveauPrix;
+    out.push(\`<span class="badge bon" title="\${a.baisseDePrix.ancienPrix.toLocaleString('fr-BE')} € → \${a.baisseDePrix.nouveauPrix.toLocaleString('fr-BE')} € depuis le \${formaterDate(a.baisseDePrix.depuis)}">📉 -\${delta.toLocaleString('fr-BE')} €</span>\`);
+  }
   // Signalé par Immovlan : le prix a bougé depuis la mise en ligne.
   if (a.prixModifie) out.push('<span class="badge info" title="Le portail signale un changement de prix depuis la mise en ligne">📉 Prix modifié</span>');
   // Prix de départ d'un projet neuf : le montant affiché n'est pas ferme.
@@ -1106,6 +1148,8 @@ function rendreKpis(liste) {
   const m2Med = mediane(liste.map(a => a.prixM2));
   const gareMed = mediane(liste.map(a => a.distanceGareKm));
   const incertains = liste.filter(a => a.champsManquants?.length).length;
+  const nouveaux = liste.filter(a => a.nouveau).length;
+  const baisses = liste.filter(a => a.baisseDePrix).length;
 
   $('kpis').innerHTML = \`
     <div class="kpi hero">
@@ -1133,6 +1177,15 @@ function rendreKpis(liste) {
     <div class="kpi">
       <div class="kpi-label">Favoris</div>
       <div class="kpi-valeur">\${favoris.length}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Nouveautés</div>
+      <div class="kpi-valeur">\${nouveaux}</div>
+      <div class="kpi-note">depuis le dernier scrape</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Baisses de prix</div>
+      <div class="kpi-valeur">\${baisses}</div>
     </div>\`;
 }
 
@@ -1208,7 +1261,7 @@ function rendre() {
 /* ------------------------------------------------------------
    Écoute des filtres
    ------------------------------------------------------------ */
-for (const id of ['q', 'commune', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains']) {
+for (const id of ['q', 'commune', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains', 'nouveautesSeulement']) {
   $(id).addEventListener('input', rendre);
   $(id).addEventListener('change', rendre);
 }
@@ -1217,9 +1270,30 @@ $('btnReset').onclick = () => {
   $('commune').value = '*'; $('source').value = '*'; $('chMin').value = '0'; $('tri').value = 'score';
   // "Masquer les biens sous option" et "Prix connu uniquement" sont cochées
   // par défaut : le réinitialiser doit y revenir, pas les décocher.
-  $('favOnly').checked = false; $('masquerOptions').checked = true; $('prixConnuSeulement').checked = true; $('masquerIncertains').checked = false;
+  $('favOnly').checked = false; $('masquerOptions').checked = true; $('prixConnuSeulement').checked = true; $('masquerIncertains').checked = false; $('nouveautesSeulement').checked = false;
   rendre();
 };
+
+/* ------------------------------------------------------------
+   Récemment disparus : liste statique, indépendante des filtres de la
+   grille principale (secondaire, généralement courte).
+   ------------------------------------------------------------ */
+function rendreDisparus() {
+  $('blocDisparus').hidden = DISPARUS.length === 0;
+  if (!DISPARUS.length) return;
+
+  $('titreDisparus').textContent = \`Récemment disparus (\${DISPARUS.length})\`;
+
+  const tries = [...DISPARUS].sort((a, b) => b.joursAbsence - a.joursAbsence);
+  $('listeDisparus').innerHTML = tries.map(d => \`
+    <div class="ligne-disparu">
+      <span class="titre">\${echapper(d.titre)} <span class="lieu">— \${echapper(d.commune ?? '?')}</span></span>
+      <span class="prix">\${euro(d.prixActuel)}</span>
+      <span class="depuis">disparu depuis \${d.joursAbsence} j</span>
+      \${d.lien ? \`<a href="\${echapper(d.lien)}" target="_blank" rel="noopener">Voir →</a>\` : '<span></span>'}
+    </div>\`).join('');
+}
+rendreDisparus();
 
 rendre();
 </script>

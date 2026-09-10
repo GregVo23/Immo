@@ -342,6 +342,23 @@ export const URLS = [
 export const FICHIERS = {
     brutes: 'annonces-brutes.json', // récolte navigateur, jamais parsée
     annonces: 'annonces.json', // sortie propre, consommée par le dashboard
+    historique: 'historique.json', // mémoire d'un run à l'autre (nouveau/baisse/disparu)
+    disparus: 'disparus.json', // biens absents du dernier scrape, pour affichage
     cacheGeocode: 'geocode-cache.json',
     dashboard: 'dashboard.html',
+};
+
+/**
+ * Seuils de lib/historique.mjs.
+ *   joursAvantDisparu : un bien absent depuis MOINS longtemps n'est pas
+ *     signalé « disparu » — ça absorbe un scrape partiellement raté sur un
+ *     portail (vécu avec ERA : 91 → 33 cartes d'un run à l'autre sans lien
+ *     avec une vraie baisse d'offre) sans le confondre avec une vente.
+ *   joursPurge : au-delà, on arrête de garder trace d'un bien disparu —
+ *     sinon historique.json grossit indéfiniment sur des biens vendus
+ *     depuis longtemps.
+ */
+export const HISTORIQUE = {
+    joursAvantDisparu: 2,
+    joursPurge: 45,
 };

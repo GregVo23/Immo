@@ -6,7 +6,7 @@
     "start": "node scrapper_immo.mjs",
     "reparse": "node parse_annonces.mjs",
     "dashboard": "node generate_dashboard.mjs",
-    "test": "node test_parse.mjs",
+    "test": "node test_parse.mjs && node test_historique.mjs",
     "all": "node scrapper_immo.mjs && node generate_dashboard.mjs"
   },
   "dependencies": {

@@ -7,3 +7,11 @@ dashboard.html
 geocode-cache.json
 debug/
 storage/
+
+# historique.json fait exception : ce N'EST PAS régénérable comme les fichiers
+# ci-dessus (annonces-brutes.json seul ne permet pas de le reconstruire).
+# Le supprimer remet tout à "nouveau" au prochain run. Gitignoré comme le
+# reste par cohérence, mais vaut la peine d'être sauvegardé à part si le
+# suivi dans le temps compte pour toi.
+historique.json
+disparus.json

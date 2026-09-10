@@ -10,7 +10,7 @@ autonome.
 npm start         # scrape les 7 portails + parse → annonces.json
 npm run reparse   # re-parse SANS re-scraper      → annonces.json
 npm run dashboard # génère dashboard.html
-npm test          # tests du parsing (155 cas)
+npm test          # tests du parsing + historique (204 cas)
 npm run all       # scrape + dashboard
 ```
 
@@ -52,6 +52,40 @@ generate_dashboard.mjs → dashboard.html      (géocodage + mesures)
 
 Le navigateur ne fait que ramasser les fragments de texte de chaque carte.
 Tout le parsing se fait en Node, dans `lib/parse.mjs`, en fonctions pures.
+
+## Historique : nouveautés, baisses de prix, disparitions
+
+`parse_annonces.mjs` compare chaque run à `historique.json` (créé au premier
+`npm start`) pour détecter :
+- **🆕 Nouveau** — un bien dont AUCUN lien (principal ou fusionné d'un autre
+  portail) n'était connu avant ce run.
+- **📉 Baisse de prix** — comparée uniquement au lien PRINCIPAL de l'annonce :
+  si la fusion inter-portails change de source principale d'un run à l'autre,
+  on ne compare pas deux prix de portails différents, donc pas de fausse
+  baisse inventée. Le compromis : une vraie baisse peut être manquée le run
+  où la source principale change (rare, sans conséquence au run suivant).
+- **❌ Disparu** — absent depuis `HISTORIQUE.joursAvantDisparu` jours (2 par
+  défaut) au moins. Ce délai n'est pas cosmétique : ERA est déjà tombé de 91 à
+  33 cartes entre deux runs sans rapport avec une vraie baisse d'offre (aléa
+  de scrape) — sans lui, un run raté ferait passer des dizaines de biens
+  encore en vente pour vendus. Purgé de l'historique après
+  `HISTORIQUE.joursPurge` jours (45) d'absence continue.
+
+Le tout premier run ne marque **rien** comme nouveau (rien à comparer : ce
+serait 100 % de bruit, pas un signal). De même, l'ajout d'un nouveau portail
+(comme Immoweb ou Trior) fait mécaniquement apparaître tous ses biens comme
+« nouveaux » au run suivant — c'est correct au sens strict (ils sont
+nouveaux *pour ce suivi*), mais à interpréter comme tel plutôt que comme une
+vraie vague d'arrivées sur le marché.
+
+`historique.json` **n'est pas régénérable** comme les autres fichiers
+gitignorés (annonces.json, geocode-cache.json...) : lui seul retient la
+mémoire d'un run à l'autre. Le supprimer remet tout le suivi à zéro.
+`disparus.json` est reconstruit à chaque run, secondaire.
+
+Dans le dashboard : badges 🆕/📉 sur les cartes concernées, case « Nouveautés
+seulement », tri « Plus récents d'abord », section repliable « Récemment
+disparus », et deux tuiles KPI (Nouveautés, Baisses de prix).
 
 Conséquence pratique : corriger une regex ne demande pas de re-scraper les
 4 sites. On relance `npm run reparse` sur les données brutes déjà récoltées,
