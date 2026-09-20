@@ -16,28 +16,66 @@ import { URLS, FICHIERS, getSiteConfig, TOUS_LES_CP } from './config.mjs';
 import { parserToutesLesAnnonces } from './parse_annonces.mjs';
 
 /**
- * Scroll adaptatif : continue tant que de nouveaux éléments se chargent
- * (scroll infini de Zimmo/Century21) et s'arrête dès que la hauteur de page
- * se stabilise plusieurs fois de suite.
+ * Scroll adaptatif : continue tant que de NOUVELLES CARTES se chargent.
+ *
+ * On compte les cartes plutôt que la hauteur du document : c'est la mesure
+ * de ce qui nous intéresse vraiment. La hauteur, elle, peut rester figée
+ * quelques secondes pendant qu'une requête part chercher le lot suivant —
+ * ERA s'arrêtait ainsi à 22 cartes alors que la page en charge 100.
+ *
+ * `stableThreshold` dépend du type de site : un portail paginé n'a qu'un lot
+ * fixe par page (le défilement ne sert qu'à déclencher les images), inutile
+ * d'attendre longtemps ; un scroll infini mérite plus de patience.
  */
-async function autoScroll(page, log, { maxScrolls = 60, stableThreshold = 4, waitMs = 1200 } = {}) {
-    let lastHeight = 0;
-    let stableCount = 0;
+async function autoScroll(page, log, { selector = null, maxScrolls = 60, stableThreshold = 4, waitMs = 1200 } = {}) {
+    let derniereMesure = -1;
+    let stable = 0;
     for (let i = 0; i < maxScrolls; i++) {
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
         await page.waitForTimeout(waitMs);
-        const newHeight = await page.evaluate(() => document.body.scrollHeight);
-        if (newHeight === lastHeight) {
-            stableCount++;
-            if (stableCount >= stableThreshold) {
-                log.info(`📜 Fin du scroll (contenu stable après ${i + 1} scrolls).`);
+
+        const mesure = selector
+            ? await page.evaluate((s) => document.querySelectorAll(s).length, selector)
+            : await page.evaluate(() => document.body.scrollHeight);
+
+        if (mesure === derniereMesure) {
+            stable++;
+            if (stable >= stableThreshold) {
+                log.info(`📜 Fin du scroll (${selector ? mesure + ' cartes' : 'hauteur'} stable après ${i + 1} scrolls).`);
                 break;
             }
         } else {
-            stableCount = 0;
+            stable = 0;
         }
-        lastHeight = newHeight;
+        derniereMesure = mesure;
     }
+}
+
+/**
+ * Retire les fenêtres promotionnelles qui recouvrent la page et interceptent
+ * les clics. Constaté sur Trior : une modale HubSpot
+ * (#hs-interactives-modal-overlay) rendait le bouton « Trouver » incliquable,
+ * le clic échouait après 56 tentatives et le portail remontait 0 bien.
+ */
+async function masquerSuperpositions(page) {
+    await page
+        .evaluate(() => {
+            const selecteurs = [
+                '[id^="hs-interactives"]',
+                '[id^="hs-web-interactives"]',
+                '#hs-modal-overlay',
+                '.modal-backdrop',
+            ];
+            let retires = 0;
+            for (const s of selecteurs) {
+                for (const el of document.querySelectorAll(s)) {
+                    el.remove();
+                    retires++;
+                }
+            }
+            return retires;
+        })
+        .catch(() => 0);
 }
 
 /**
@@ -77,43 +115,59 @@ function recolterCartes({ selector, source, lienPattern, lienExclusion }) {
     }
 
     /**
-     * Meilleure image de la carte. Deux pièges : les placeholders lazy-load
-     * (data:image/svg+xml chez Century21, nophoto.svg chez Zimmo) et les
-     * srcset, où il faut choisir la plus grande largeur disponible.
+     * TOUS les candidats image de la carte, dans l'ordre du DOM.
+     *
+     * On ne choisit PAS ici : le navigateur récolte, `lib/parse.mjs`
+     * (choisirImage) tranche. C'est ce qui permet de corriger la règle
+     * — logos d'agence, pictogrammes PEB, « pas de photo » — d'un simple
+     * `npm run reparse`. Deux pièges restent côté récolte : les
+     * placeholders de lazy-load (`data:image/svg+xml` chez Century21) et
+     * les srcset, où il faut choisir la plus grande largeur disponible.
      */
-    function meilleureImage(carte) {
-        const estValide = (u) => u && !u.startsWith('data:') && !/nophoto|no-photo|placeholder|blank\.|dummy/i.test(u);
+    function imagesCandidates(carte) {
+        const urls = [];
+        const ajouter = (u) => {
+            if (!u || u.startsWith('data:')) return;
+            try {
+                const abs = new URL(u, location.href).href;
+                if (!urls.includes(abs)) urls.push(abs);
+            } catch {
+                /* URL non résolvable */
+            }
+        };
 
         const depuisSrcset = (srcset) => {
-            const candidats = srcset
+            const candidats = (srcset || '')
                 .split(',')
                 .map((part) => {
                     const [url, taille] = part.trim().split(/\s+/);
                     return { url, largeur: parseInt(taille ?? '0', 10) || 0 };
                 })
-                .filter((c) => estValide(c.url));
+                .filter((c) => c.url && !c.url.startsWith('data:'));
             if (!candidats.length) return null;
             // On plafonne à 1200 px : inutile de stocker l'original 4000 px.
             candidats.sort((a, b) => b.largeur - a.largeur);
             return (candidats.find((c) => c.largeur <= 1200) ?? candidats[candidats.length - 1]).url;
         };
 
-        for (const src of carte.querySelectorAll('source[srcset]')) {
-            const u = depuisSrcset(src.getAttribute('srcset') ?? '');
-            if (u) return new URL(u, location.href).href;
+        // querySelectorAll rend l'ordre du document : la première photo
+        // réelle de la carte reste donc la première candidate.
+        for (const el of carte.querySelectorAll('img, source[srcset], [style*="background-image"]')) {
+            const tag = el.tagName.toUpperCase();
+            if (tag === 'IMG') {
+                ajouter(el.getAttribute('src'));
+                ajouter(el.getAttribute('data-src'));
+                ajouter(el.getAttribute('data-lazy-src'));
+                ajouter(depuisSrcset(el.getAttribute('srcset') ?? el.getAttribute('data-srcset')));
+            } else if (tag === 'SOURCE') {
+                ajouter(depuisSrcset(el.getAttribute('srcset')));
+            } else {
+                const m = (el.getAttribute('style') ?? '').match(/url\(['"]?(.*?)['"]?\)/);
+                if (m) ajouter(m[1]);
+            }
+            if (urls.length >= 12) break; // au-delà, c'est du carrousel
         }
-        for (const img of carte.querySelectorAll('img')) {
-            const direct = [img.getAttribute('src'), img.getAttribute('data-src'), img.getAttribute('data-lazy-src')].find(estValide);
-            if (direct) return new URL(direct, location.href).href;
-            const u = depuisSrcset(img.getAttribute('srcset') ?? img.getAttribute('data-srcset') ?? '');
-            if (u) return new URL(u, location.href).href;
-        }
-        const bg = carte.querySelector('[style*="background-image"]');
-        if (bg) {
-            const m = (bg.getAttribute('style') ?? '').match(/url\(['"]?(.*?)['"]?\)/);
-            if (m && estValide(m[1])) return new URL(m[1], location.href).href;
-        }
-        return null;
+        return urls;
     }
 
     const cartes = Array.from(document.querySelectorAll(selector));
@@ -161,7 +215,7 @@ function recolterCartes({ selector, source, lienPattern, lienExclusion }) {
 
         resultats.push({
             fragments,
-            imageUrl: meilleureImage(carte),
+            images: imagesCandidates(carte),
             lien,
             source,
             dateExtraction: new Date().toISOString(),
@@ -237,9 +291,20 @@ async function filtrerTrior(page, log) {
     await page.selectOption('select[name="SelectedCategory"]', '1'); // 1 = Maison
     await page.selectOption('select[name="SelectedCities"]', disponibles);
 
+    // La modale HubSpot peut apparaître APRÈS le chargement initial : on la
+    // retire juste avant de cliquer, sinon elle intercepte le clic et le
+    // formulaire n'est jamais soumis (Trior remontait alors 0 bien).
+    await masquerSuperpositions(page);
+
     await Promise.all([
         page.waitForResponse((r) => r.url().includes('chercher-bien'), { timeout: 15000 }).catch(() => null),
-        page.click('button[type="submit"]'),
+        // `force` en dernier recours : si une superposition inconnue reparaît,
+        // le clic est tout de même délivré au bouton plutôt que d'expirer.
+        page.click('button[type="submit"]', { timeout: 10000 }).catch(async () => {
+            log.warning('⚠️ Clic bloqué par une superposition — nouvelle tentative en force.');
+            await masquerSuperpositions(page);
+            await page.click('button[type="submit"]', { force: true, timeout: 10000 });
+        }),
     ]);
     await page.waitForTimeout(1500);
 
@@ -285,7 +350,10 @@ const crawler = new PlaywrightCrawler({
             log.info('ℹ️ Pas de bannière de cookies.');
         }
 
-        // 1 bis. Trior : pas d'URL filtrée, on pilote son formulaire de recherche.
+        // 1 bis. Fenêtres promotionnelles qui bloquent les clics (voir Trior).
+        await masquerSuperpositions(page);
+
+        // 1 ter. Trior : pas d'URL filtrée, on pilote son formulaire de recherche.
         if (config.source === 'Trior') {
             await filtrerTrior(page, log);
         }
@@ -298,7 +366,12 @@ const crawler = new PlaywrightCrawler({
         }
 
         log.info('📜 Défilement...');
-        await autoScroll(page, log);
+        // Un portail paginé n'a qu'un lot fixe par page : on n'insiste pas.
+        // Un scroll infini, lui, mérite d'attendre plusieurs tours à vide.
+        await autoScroll(page, log, {
+            selector: config.cardSelector,
+            stableThreshold: config.paginationParam ? 2 : 6,
+        });
 
         // 3. Récolte brute
         const cartes = await page.evaluate(recolterCartes, {

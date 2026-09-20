@@ -9,9 +9,10 @@ autonome.
 ```bash
 npm start         # scrape les 7 portails + parse → annonces.json
 npm run reparse   # re-parse SANS re-scraper      → annonces.json
+npm run adresses  # visite les fiches pour l'adresse exacte (incrémental, caché)
 npm run dashboard # génère dashboard.html
-npm test          # tests du parsing + historique (204 cas)
-npm run all       # scrape + dashboard
+npm test          # tests parsing, historique, adresses, santé (252 cas)
+npm run all       # scrape + adresses + dashboard
 ```
 
 Pour sonder un portail à ajouter :
@@ -52,6 +53,60 @@ generate_dashboard.mjs → dashboard.html      (géocodage + mesures)
 
 Le navigateur ne fait que ramasser les fragments de texte de chaque carte.
 Tout le parsing se fait en Node, dans `lib/parse.mjs`, en fonctions pures.
+
+## Santé des portails
+
+Chaque run compare sa récolte par portail à la **médiane des runs précédents**
+(`sante-portails.json`) et alerte au-delà de −40 %.
+
+Pourquoi : un portail muet se remarque, un portail qui s'effondre sans tomber
+à zéro, non. ERA est passé de 100 à 22 cartes (défilement qui abandonnait trop
+tôt) et Trior de 220 à 0 (une fenêtre promotionnelle HubSpot interceptait le
+clic de son formulaire) — **les deux en silence**. Sans surveillance, on croit
+simplement que le marché s'est calmé.
+
+La référence est la médiane et non le dernier run : si le run précédent était
+lui-même cassé, le comparer à lui ferait passer la panne pour la normale — et
+la réparation pour une anomalie.
+
+Seuils dans `SANTE` (config.mjs). Le seuil de 40 % laisse passer la variation
+normale de l'offre (±20-30 %) tout en attrapant les vraies pannes.
+
+## Adresses exactes
+
+Les pages de résultats ne donnent presque jamais l'adresse : mesuré sur un run
+réel, **63 biens sur 823 (7,6 %)** seulement avaient une rue, les autres étant
+positionnés au centre de leur commune. C'est un problème de fond, pas
+cosmétique : « accès gare » pèse **40 points sur 100** dans le score, et sur un
+barème où 0,8 km vaut 100 points et 6 km en vaut 45, l'erreur de ±2 km
+(largeur courante d'une commune) déplaçait un bien de 30 à 40 points. Le
+classement était donc en grande partie du bruit.
+
+`npm run adresses` visite la page de détail de chaque bien sans adresse et en
+extrait la rue (`lib/adresse_detail.mjs`). Couverture constatée : ~83 % chez
+Immoweb ; le reste correspond à des annonces dont le vendeur masque
+volontairement l'adresse (« Demander l'adresse exacte ») — on ne devine rien,
+ces biens gardent leur position communale et leur badge « Position approx. ».
+
+Le coût tient grâce au **cache** (`adresses-cache.json`) : une adresse ne
+change jamais, donc une fiche déjà visitée ne l'est plus jamais — y compris
+celles sans adresse publiée, sinon elles seraient réessayées à chaque run pour
+rien. Le premier passage est long (~1 fiche/seconde) ; les suivants ne
+traitent que les nouvelles annonces. Le cache est écrit tous les 20 biens :
+un run interrompu n'est pas perdu.
+
+⚠️ **Les coordonnées GPS présentes dans le HTML des portails sont
+inutilisables** — vérifié sur données réelles : deux annonces Immoweb situées à
+20 km l'une de l'autre (Ternat 1741 et Rebecq 1430) portaient des
+`latitude`/`longitude` identiques, et une annonce Immovlan à Piétrain (Brabant
+wallon) pointait en province de Liège, ~30 km à côté. Ces valeurs appartiennent
+à d'autres composants de la page. On extrait donc le TEXTE de l'adresse et on
+le confie au géocodage Nominatim déjà en place.
+
+Piège de parsing à ne pas réintroduire : en néerlandais le type de voie est
+**soudé** au nom (`Assesteenweg`, `Koldamstraat`, `Fossebaan`), alors qu'en
+français c'est un mot isolé (`Rue De Tirlemont`). Exiger une frontière de mot
+des deux côtés faisait rater 4 adresses flamandes sur 5.
 
 ## Historique : nouveautés, baisses de prix, disparitions
 

@@ -5,9 +5,10 @@
   "scripts": {
     "start": "node scrapper_immo.mjs",
     "reparse": "node parse_annonces.mjs",
+    "adresses": "node enrichir_adresses.mjs",
     "dashboard": "node generate_dashboard.mjs",
-    "test": "node test_parse.mjs && node test_historique.mjs",
-    "all": "node scrapper_immo.mjs && node generate_dashboard.mjs"
+    "test": "node test_parse.mjs && node test_historique.mjs && node test_adresse.mjs && node test_sante.mjs",
+    "all": "node scrapper_immo.mjs && node enrichir_adresses.mjs && node generate_dashboard.mjs"
   },
   "dependencies": {
     "crawlee": "^3.0.0",

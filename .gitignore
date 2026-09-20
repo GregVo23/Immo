@@ -15,3 +15,8 @@ storage/
 # suivi dans le temps compte pour toi.
 historique.json
 disparus.json
+
+# Même remarque : adresses-cache.json coûte des centaines de visites de
+# fiches (~1/seconde) à reconstituer. À sauvegarder si tu y tiens.
+adresses-cache.json
+sante-portails.json

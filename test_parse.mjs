@@ -3,8 +3,21 @@
  * Lancer : node test_parse.mjs
  */
 
-import { construireAnnonce, dedupliquer, parseSurfaces, parsePieces, parseStatut, parseJoursEnLigne, parsePeb, parseCpEtVilleDepuisLien, parseTypeBien } from './lib/parse.mjs';
-import { SITES } from './config.mjs';
+import {
+    construireAnnonce,
+    dedupliquer,
+    parseSurfaces,
+    parsePieces,
+    parseStatut,
+    parseJoursEnLigne,
+    parsePeb,
+    parseCpEtVilleDepuisLien,
+    parseTypeBien,
+    estImageUtilisable,
+    choisirImage,
+    construireGalerie,
+} from './lib/parse.mjs';
+import { SITES, regionDuCp } from './config.mjs';
 import { TYPES_EXCLUS as TYPES_EXCLUS_TEST } from './parse_annonces.mjs';
 
 /** Les vrais hints du portail, pour tester ce qui tournera en production. */
@@ -522,7 +535,9 @@ const immowebClassified = construireAnnonce(
 verifier('"· 241" → 241 m² habitable', immowebClassified.surfaceHabitable, 241);
 verifier('"· 180" → 180 m² terrain', immowebClassified.surfaceTerrain, 180);
 verifier('pas de titre éditorial → titre fabriqué', immowebClassified.titre, 'Maison 3 ch. à Hoeilaart');
-verifier('Hoeilaart (1560) hors périmètre', immowebClassified.dansPerimetre, false);
+// Hoeilaart (1560) a été ajouté au périmètre entre-temps : on teste donc le
+// rattachement correct à sa commune plutôt qu'une exclusion devenue fausse.
+verifier('Hoeilaart (1560) rattaché à sa commune', immowebClassified.commune, 'Hoeilaart');
 
 console.log('\n== Immoweb : exclusion des catégories hors maison ==');
 
@@ -627,6 +642,194 @@ verifier('"219j"', parseJoursEnLigne(['219j']), 219);
 verifier('"3 chambres" n\'est pas une ancienneté', parseJoursEnLigne(['3 chambres']), null);
 verifier('lettre nue ignorée sans le hint', parsePeb(['B'], {}), null);
 verifier('"PEB : F" toujours lu', parsePeb(['PEB : F'], {}), 'F');
+
+/* ------------------------------------------------------------
+   IMAGES — URLs relevées dans annonces.json (audit 1283 biens)
+   ------------------------------------------------------------ */
+console.log('\n== Images : photos acceptées ==');
+const PHOTOS_REELLES = [
+    ['Immoweb', 'https://media-resize.immowebstatic.be/classifieds/f21f761b-1234/500x333.jpg'],
+    ['Trior', 'https://r2.storagewhise.eu/estate/Pictures/12345_1.jpg'],
+    ['ERA', 'https://www.era.be/sites/default/files/styles/card/public/2024-05/maison.jpg'],
+    ['Century21', 'https://www.century21.be/media/cache/property_card/uploads/properties/8842/photo.jpeg'],
+    // Régression : /customers/ ne doit PAS servir de motif de rejet, Zimmo
+    // y publie ses vraies photos.
+    ['Zimmo', 'https://files.zimmo.be/backend-api/abc=/828x618/-/real-estate/customers/b4eeca6a/dealers/171e89c9/listings/a47b3598/images/01a0bfa9'],
+];
+for (const [portail, url] of PHOTOS_REELLES) {
+    verifier(`photo ${portail} acceptée`, estImageUtilisable(url), true);
+}
+
+console.log('\n== Images : vignettes trompeuses écartées ==');
+const VIGNETTES_FAUTIVES = [
+    ['logo agence Immoweb (500x500)', 'https://media-resize.immowebstatic.be/customers/5580/500x500/logo/5580'],
+    ['logo agence Immoweb (direct)', 'https://media.immowebstatic.be/customers/5580/logo/5580'],
+    ['pictogramme PEB', 'https://media.immowebstatic.be/epc/pics/peb/peb_e.png'],
+    ['label énergétique Zimmo', 'https://www.zimmo.be/fr/vilvoorde-1800/a-vendre/maison/assets/@listings/energy-labels/epc_c.svg'],
+    ['icône de carrousel Immoweb', 'https://assets.immoweb.be/103553/images/icons/icon-chevron-up.svg'],
+    ['placeholder Immovlan', 'https://immovlan.be/images/nopic.svg'],
+    ['placeholder Zimmo', 'https://www.zimmo.be/img/nophoto.png'],
+    ['logo nommé en clair', 'https://cdn.agence.be/assets/logo-header.svg'],
+    ['placeholder lazy-load', 'data:image/svg+xml;base64,PHN2Zy8+'],
+];
+for (const [libelle, url] of VIGNETTES_FAUTIVES) {
+    verifier(`${libelle} écarté`, estImageUtilisable(url), false);
+}
+verifier('URL absente', estImageUtilisable(null), false);
+
+console.log('\n== Images : choix parmi les candidats ==');
+verifier(
+    'le logo est sauté au profit de la photo',
+    choisirImage({
+        images: [
+            'https://media-resize.immowebstatic.be/customers/5580/500x500/logo/5580',
+            'https://media.immowebstatic.be/epc/pics/peb/peb_e.png',
+            'https://media-resize.immowebstatic.be/classifieds/14e0c4a3/500x333.jpg',
+        ],
+    }),
+    'https://media-resize.immowebstatic.be/classifieds/14e0c4a3/500x333.jpg',
+);
+verifier(
+    'aucun candidat exploitable → null (plutôt qu\'un logo trompeur)',
+    choisirImage({ images: ['https://media.immowebstatic.be/customers/5580/logo/5580'] }),
+    null,
+);
+verifier('carte sans image', choisirImage({ images: [] }), null);
+// Repli sur l'ancien champ : annonces-brutes.json d'avant la récolte
+// multi-candidats doit rester reparsable sans re-scrape.
+verifier(
+    'ancien format imageUrl encore accepté',
+    choisirImage({ imageUrl: 'https://www.era.be/sites/default/files/styles/card/public/m.jpg' }),
+    'https://www.era.be/sites/default/files/styles/card/public/m.jpg',
+);
+verifier('ancien format imageUrl fautif → null', choisirImage({ imageUrl: 'https://immovlan.be/images/nopic.svg' }), null);
+verifier(
+    'les candidats priment sur l\'ancien champ',
+    choisirImage({
+        images: ['https://r2.storagewhise.eu/estate/Pictures/9_1.jpg'],
+        imageUrl: 'https://media.immowebstatic.be/customers/1/logo/1',
+    }),
+    'https://r2.storagewhise.eu/estate/Pictures/9_1.jpg',
+);
+
+/* ------------------------------------------------------------
+   RÉGION — déduite du code postal
+   ------------------------------------------------------------ */
+console.log('\n== Région : les trois régions ==');
+verifier('1160 Auderghem → Bruxelles', regionDuCp(1160), 'Bruxelles');
+verifier('1200 Woluwe-Saint-Lambert → Bruxelles', regionDuCp(1200), 'Bruxelles');
+verifier('1435 Mont-Saint-Guibert → Wallonie', regionDuCp(1435), 'Wallonie');
+verifier('5030 Gembloux → Wallonie', regionDuCp(5030), 'Wallonie');
+verifier('7090 Braine-le-Comte → Wallonie', regionDuCp(7090), 'Wallonie');
+verifier('1740 Ternat → Flandre', regionDuCp(1740), 'Flandre');
+verifier('9470 Denderleeuw → Flandre', regionDuCp(9470), 'Flandre');
+
+console.log('\n== Région : les frontières de tranches ==');
+// 1299/1300 sépare Bruxelles du Brabant wallon, 1499/1500 le Brabant
+// wallon du Brabant flamand : ce sont les deux coupures du périmètre.
+verifier('1299 encore Bruxelles', regionDuCp(1299), 'Bruxelles');
+verifier('1300 Wavre déjà en Wallonie', regionDuCp(1300), 'Wallonie');
+verifier('1499 encore Brabant wallon', regionDuCp(1499), 'Wallonie');
+verifier('1500 Halle déjà en Flandre', regionDuCp(1500), 'Flandre');
+// Le Brabant flamand est coupé en deux par la province d'Anvers.
+verifier('3000 Louvain → Flandre', regionDuCp(3000), 'Flandre');
+verifier('CP en chaîne accepté', regionDuCp('1435'), 'Wallonie');
+verifier('CP absent', regionDuCp(null), null);
+verifier('CP hors plage', regionDuCp(999), null);
+
+/* ------------------------------------------------------------
+   GALERIE — listes d'images relevées sur de vraies fiches
+   ------------------------------------------------------------ */
+console.log('\n== Galerie : la même photo en plusieurs tailles ne compte qu\'une fois ==');
+// ERA sert le même fichier sous trois styles Drupal différents.
+const eraBase = 'https://www.era.be/sites/default/files';
+verifier(
+    'ERA : 3 styles du même fichier → 1 photo',
+    construireGalerie([
+        `${eraBase}/styles/social_extra_large/public/eraforce/images/property/00PTsAAARue.jpeg`,
+        `${eraBase}/eraforce/images/property/00PTsAAARue.jpeg`,
+        `${eraBase}/styles/media_carousel_large/public/eraforce/images/property/00PTsAAARue.jpeg`,
+    ]).length,
+    1,
+);
+verifier(
+    'Whise : /640/ et /1920/ du même fichier → 1 photo',
+    construireGalerie([
+        'https://r2.storagewhise.eu/trior/Pictures/78/640/9b1810d8.jpg',
+        'https://r2.storagewhise.eu/trior/Pictures/78/1920/9b1810d8.jpg',
+    ]).length,
+    1,
+);
+verifier(
+    'Immoweb : 736x736 et 300x300 de photos DIFFÉRENTES → 2 photos',
+    construireGalerie([
+        'https://media-resize.immowebstatic.be/classifieds/3b15a37a/736x736/aaa',
+        'https://media-resize.immowebstatic.be/classifieds/3b15a37a/300x300/bbb',
+    ]).length,
+    2,
+);
+
+console.log('\n== Galerie : ne pas montrer la maison du voisin ==');
+// Cas réel : une fiche Century21 portait 60 images appartenant à QUATRE
+// biens. Le bien de la fiche est celui de la couverture (4 photos) ; prendre
+// le plus gros groupe aurait affiché les 28 photos d'un bien similaire.
+const urlC21 = (cle) => 'https://images.century21.be/' + Buffer.from(JSON.stringify({ key: cle })).toString('base64');
+const fiche21 = [
+    urlC21('property-assets/CEBIEN/aca0-0.jpg'),
+    urlC21('property-assets/CEBIEN/aca0-1.jpg'),
+    urlC21('agency-assets/AGENCE/cdc3.jpg'),
+    ...Array.from({ length: 12 }, (_, i) => urlC21(`property-assets/LEVOISIN/8948-${i}.jpg`)),
+];
+verifier('Century21 : la couverture ancre le bon bien', construireGalerie(fiche21).length, 2);
+verifier(
+    '  → et ce sont bien ses photos à lui',
+    construireGalerie(fiche21).every((u) => Buffer.from(u.split('/').pop(), 'base64').toString().includes('CEBIEN')),
+    true,
+);
+
+console.log('\n== Galerie : repli quand la couverture est rangée à part ==');
+// Immovlan expose d'abord son image de partage Facebook, isolée dans son
+// propre dossier, alors que la galerie est sous /images/.
+const vlan = 'https://api-image.immovlan.be/v1/property/VBE66784';
+verifier(
+    'Immovlan : la galerie prend le dessus sur l\'image de partage',
+    construireGalerie([
+        `${vlan}/gallery-like-image/Facebook/Landscape?w=1200`,
+        `${vlan}/images/aaa.jpg/Large`,
+        `${vlan}/images/bbb.jpg/Large`,
+        `${vlan}/images/ccc.jpg/Large`,
+    ]).length,
+    3,
+);
+
+console.log('\n== Galerie : habillage du site écarté ==');
+// Zimmo n'expose qu'UNE photo au chargement ; le repli ne doit surtout pas
+// aller chercher les logos de sponsors du pied de page (cas réel constaté).
+const zimmo = 'https://files.zimmo.be/backend-api/sHQie04pOBQeHu3nNB-X65-Hv2I=/828x618/filters:image-format(pjpg)/-/real-estate/listings/65e8/images/01a0';
+verifier(
+    'Zimmo : 1 vraie photo, pas les 3 logos du pied de page',
+    construireGalerie([
+        zimmo,
+        'https://www.zimmo.be/fr/maison/assets/images/footer/handisport.png',
+        'https://www.zimmo.be/fr/maison/assets/images/footer/g-sport.png',
+        'https://www.zimmo.be/fr/maison/assets/images/footer/paralympic.png',
+        'https://tiles.zimmo.be/styles/osm-bright-latin/static/4.44,50.92,18/327x164@2x.png',
+    ]),
+    [zimmo],
+);
+
+console.log('\n== Galerie : cas limites ==');
+verifier('aucune image', construireGalerie([]), []);
+verifier('entrée nulle', construireGalerie(null), []);
+verifier('que des logos', construireGalerie(['https://x.be/customers/1/logo/1.png']), []);
+verifier(
+    'plafond respecté',
+    construireGalerie(
+        Array.from({ length: 20 }, (_, i) => `https://media-resize.immowebstatic.be/classifieds/abc/736x736/p${i}`),
+        { max: 6 },
+    ).length,
+    6,
+);
 
 /* ------------------------------------------------------------ */
 console.log(`\n${'─'.repeat(50)}`);

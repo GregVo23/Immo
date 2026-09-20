@@ -9,9 +9,10 @@
 import './lib/racine.mjs'; // doit rester en premier : fixe le dossier de travail
 import fs from 'fs';
 import { pathToFileURL } from 'url';
-import { FICHIERS, SITES, CRITERES, CONFIG_PAR_DEFAUT, HISTORIQUE } from './config.mjs';
+import { FICHIERS, SITES, CRITERES, CONFIG_PAR_DEFAUT, HISTORIQUE, SANTE } from './config.mjs';
 import { construireAnnonce, dedupliquer } from './lib/parse.mjs';
 import { chargerHistorique, ecrireHistorique, rafraichirEntrees, enrichirAnnonces, calculerDisparitions } from './lib/historique.mjs';
+import { chargerSante, ecrireSante, evaluerSante, enregistrerRun } from './lib/sante.mjs';
 
 const euro = (n) => (n == null ? '—' : n.toLocaleString('fr-BE') + ' €');
 
@@ -227,7 +228,31 @@ export function parserToutesLesAnnonces() {
         console.log('   → sélecteur probablement cassé, voir les fichiers debug/*.html');
     }
 
-    return { annonces, stats, rejets };
+    /* --- Santé des portails ------------------------------------------------
+       Un portail muet se remarque ; un portail qui s'effondre de 78 % sans
+       tomber à zéro, non. C'est exactement ce qui est arrivé à ERA (100 → 22)
+       et à Trior (220 → 0) sans que rien ne le signale.                      */
+
+    const runsPrecedents = chargerSante(FICHIERS.sante);
+    const { alertes, assezDHistorique, runsComparés } = evaluerSante(parSource, runsPrecedents, SANTE);
+
+    console.log('\n🩺 SANTÉ DES PORTAILS');
+    if (!assezDHistorique) {
+        console.log(`   Référence en cours de constitution (${runsComparés}/${SANTE.minRuns} runs) — surveillance active dès le prochain run.`);
+    } else if (!alertes.length) {
+        console.log(`   ✅ Récolte conforme aux ${runsComparés} run(s) précédent(s).`);
+    } else {
+        for (const al of alertes) {
+            const icone = al.gravite === 'critique' ? '🛑' : '⚠️';
+            console.log(`   ${icone} ${al.portail} : ${al.actuel} carte(s) contre ${al.reference} habituellement (−${al.chutePct} %).`);
+        }
+        console.log('   → scraper probablement cassé (sélecteur, défilement, ou fenêtre bloquant un clic).');
+        console.log('   → si tu viens de réduire le périmètre ou le budget, la baisse est normale.');
+    }
+
+    ecrireSante(FICHIERS.sante, enregistrerRun(runsPrecedents, parSource, maintenant, SANTE));
+
+    return { annonces, stats, rejets, alertesSante: alertes };
 }
 
 // Exécution directe (et non simple import depuis le scraper).

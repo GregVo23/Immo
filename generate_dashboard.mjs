@@ -281,12 +281,16 @@ if (etales) console.log(`   🗺️ ${etales} bien(s) étalés autour de leur ce
    ============================================================
    Palette : instance de référence du guide dataviz (validée avec
    scripts/validate_palette.js en clair ET en sombre).
-     - une seule teinte catégorielle (slot 1 bleu) : il n'y a qu'une série,
-       donc pas de légende nécessaire
+     - une seule teinte catégorielle pour les données (slot 1 bleu) : il n'y
+       a qu'une série, donc pas de légende nécessaire
      - jauge de score = rampe séquentielle bleue (le score est une magnitude,
        pas un état) : remplissage bleu, piste = pas clair de la même rampe
      - couleurs de statut réservées, toujours accompagnées d'une icône ET d'un
        libellé (jamais la couleur seule)
+     - tags de région : exception assumée, aux couleurs des trois drapeaux
+       (Flandre jaune, Wallonie rouge, Bruxelles bleu). Le libellé est toujours
+       écrit, la couleur n'est qu'un repère. Contrastes vérifiés en clair ET en
+       sombre : 6,6 à 7,0 là où AA demande 4,5.
    ============================================================ */
 
 const html = `<!DOCTYPE html>
@@ -316,6 +320,18 @@ const html = `<!DOCTYPE html>
   --status-serious:  #ec835a;
   --status-critical: #d03b3b;
   --success-text:    #006300;
+  /* Tags de région, aux couleurs des trois drapeaux. Teintes pâles + texte
+     foncé de la même famille : le jaune flamand est illisible en aplat.
+     Contrastes texte/fond mesurés : 7,00 / 6,64 / 6,58 (AA exige 4,5). */
+  --region-bxl-fond:  #e4eefb;
+  --region-bxl-texte: #1b4f8f;
+  --region-bxl-bord:  #a9c9ee;
+  --region-wal-fond:  #fbe6e6;
+  --region-wal-texte: #9b2222;
+  --region-wal-bord:  #eeb2b2;
+  --region-vla-fond:  #fdf2cf;
+  --region-vla-texte: #6f5100;
+  --region-vla-bord:  #e6cf84;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -332,6 +348,17 @@ const html = `<!DOCTYPE html>
     --seq-track:      #184f95;
     --seq-fill:       #3987e5;
     --success-text:   #0ca30c;
+    /* Mêmes teintes en sombre : fond translucide, texte clair.
+       Contrastes mesurés : 6,78 / 6,66 / 6,69. */
+    --region-bxl-fond:  rgba(57,135,229,0.20);
+    --region-bxl-texte: #8cbcf2;
+    --region-bxl-bord:  rgba(57,135,229,0.45);
+    --region-wal-fond:  rgba(208,59,59,0.22);
+    --region-wal-texte: #f09a9a;
+    --region-wal-bord:  rgba(208,59,59,0.45);
+    --region-vla-fond:  rgba(250,178,25,0.20);
+    --region-vla-texte: #e9c264;
+    --region-vla-bord:  rgba(250,178,25,0.45);
   }
 }
 :root[data-theme="dark"] {
@@ -348,6 +375,17 @@ const html = `<!DOCTYPE html>
   --seq-track:      #184f95;
   --seq-fill:       #3987e5;
   --success-text:   #0ca30c;
+  /* Mêmes teintes en sombre : fond translucide, texte clair.
+     Contrastes mesurés : 6,78 / 6,66 / 6,69. */
+  --region-bxl-fond:  rgba(57,135,229,0.20);
+  --region-bxl-texte: #8cbcf2;
+  --region-bxl-bord:  rgba(57,135,229,0.45);
+  --region-wal-fond:  rgba(208,59,59,0.22);
+  --region-wal-texte: #f09a9a;
+  --region-wal-bord:  rgba(208,59,59,0.45);
+  --region-vla-fond:  rgba(250,178,25,0.20);
+  --region-vla-texte: #e9c264;
+  --region-vla-bord:  rgba(250,178,25,0.45);
 }
 
 * { box-sizing: border-box; }
@@ -436,10 +474,25 @@ button[aria-pressed="true"] { background: var(--series-1); border-color: var(--s
 .photo { aspect-ratio: 4 / 3; background: var(--gridline); position: relative; overflow: hidden; }
 .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .photo .absente { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 12px; }
+/* Défilement des photos au survol. Les pastilles ne sont là que pour dire
+   combien de photos existent et où l'on en est : elles doublent l'effet de
+   survol, qui n'existe pas au doigt. */
+.photo .pastilles { position: absolute; left: 0; right: 0; bottom: 6px; display: flex; justify-content: center; gap: 4px; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+.photo:hover .pastilles, .photo:focus-within .pastilles { opacity: 1; }
+.photo .pastille { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.55); box-shadow: 0 0 2px rgba(0,0,0,0.6); transition: background 0.15s; }
+.photo .pastille.active { background: #fff; }
+@media (prefers-reduced-motion: reduce) { .photo .pastilles { transition: none; } }
 .fav { position: absolute; top: 10px; right: 10px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; justify-content: center; font-size: 15px; padding: 0; }
 .corps { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
 .bien h3 { font-size: 14px; font-weight: 600; margin: 0; line-height: 1.35; }
 .lieu { font-size: 12px; color: var(--text-secondary); margin: 0; }
+/* Tag de région, aux couleurs des drapeaux : Flandre jaune, Wallonie rouge,
+   Bruxelles bleu. La couleur ne porte jamais l'information seule — le libellé
+   est toujours écrit — elle sert de repère visuel rapide dans la grille. */
+.tag-region { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); vertical-align: 1px; white-space: nowrap; }
+.tag-region[data-region="Bruxelles"] { background: var(--region-bxl-fond); color: var(--region-bxl-texte); border-color: var(--region-bxl-bord); }
+.tag-region[data-region="Wallonie"]  { background: var(--region-wal-fond); color: var(--region-wal-texte); border-color: var(--region-wal-bord); }
+.tag-region[data-region="Flandre"]   { background: var(--region-vla-fond); color: var(--region-vla-texte); border-color: var(--region-vla-bord); }
 
 /* Jauge de score : rampe séquentielle (magnitude), piste = pas clair de la même rampe */
 .jauge-bloc { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: baseline; }
@@ -559,6 +612,10 @@ tbody tr:hover { background: var(--page); }
       <select id="commune"><option value="*">Toutes</option></select>
     </div>
     <div class="champ">
+      <label for="region">Région</label>
+      <select id="region"><option value="*">Toutes</option></select>
+    </div>
+    <div class="champ">
       <label for="source">Portail</label>
       <select id="source"><option value="*">Tous</option></select>
     </div>
@@ -661,7 +718,7 @@ tbody tr:hover { background: var(--page); }
         Mêmes données que les cartes, sous forme de tableau.
       </caption>
       <thead><tr>
-        <th class="num">Score</th><th>Commune</th><th>Titre</th>
+        <th class="num">Score</th><th>Commune</th><th>Région</th><th>Titre</th>
         <th class="num">Prix</th><th class="num">€/m²</th><th class="num">Ch.</th>
         <th class="num">Hab.</th><th class="num">Terrain</th><th>Gare</th><th class="num">km</th>
         <th>PEB</th><th>Statut</th><th>Portail</th><th>Lien</th>
@@ -971,6 +1028,11 @@ $('btnRecadrer').onclick = recadrer;
 /* ------------------------------------------------------------
    Remplissage des listes déroulantes
    ------------------------------------------------------------ */
+// Ordre géographique nord-sud plutôt qu'alphabétique, et seules les régions
+// réellement présentes dans les données sont proposées.
+const regions = ['Bruxelles', 'Wallonie', 'Flandre'].filter(r => ANNONCES.some(a => a.region === r));
+$('region').innerHTML = '<option value="*">Toutes</option>' + regions.map(r => \`<option value="\${echapper(r)}">\${echapper(r)} (\${ANNONCES.filter(a => a.region === r).length})</option>\`).join('');
+
 const sources = [...new Set(ANNONCES.flatMap(a => a.sources ?? [a.source]))].filter(Boolean).sort();
 $('source').innerHTML = '<option value="*">Tous</option>' + sources.map(s => \`<option value="\${echapper(s)}">\${echapper(s)}</option>\`).join('');
 
@@ -981,6 +1043,7 @@ function filtrer(ignorerCommune = false) {
   const q = $('q').value.trim().toLowerCase();
   const commune = $('commune').value;
   const source = $('source').value;
+  const region = $('region').value;
   const prixMax = parseInt($('prixMax').value, 10) || Infinity;
   const prixM2Max = parseInt($('prixM2Max').value, 10) || Infinity;
   const chMin = parseInt($('chMin').value, 10) || 0;
@@ -1000,6 +1063,7 @@ function filtrer(ignorerCommune = false) {
     if (prixConnuSeulement && a.prix == null) return false;
     if (nouveautesSeulement && !a.nouveau) return false;
     if (!ignorerCommune && commune !== '*' && a.commune !== commune) return false;
+    if (region !== '*' && a.region !== region) return false;
     if (source !== '*' && !(a.sources ?? [a.source]).includes(source)) return false;
     if (masquerIncertains && a.champsManquants?.length) return false;
 
@@ -1077,8 +1141,9 @@ function carteBien(a, note) {
   const score = note.score;
   return \`
   <article class="bien">
-    <div class="photo">
-      \${a.imageUrl ? \`<img src="\${echapper(a.imageUrl)}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=&quot;absente&quot;>Photo indisponible</div>'">\` : '<div class="absente">Pas de photo</div>'}
+    <div class="photo" data-lien="\${echapper(a.lien)}">
+      \${a.imageUrl ? \`<img src="\${echapper(a.imageUrl)}" alt="" loading="lazy" onerror="photoEnEchec(this)">\` : '<div class="absente">Pas de photo</div>'}
+      \${a.photos && a.photos.length > 1 ? \`<div class="pastilles" aria-hidden="true">\${a.photos.map((_, i) => \`<span class="pastille\${i === 0 ? ' active' : ''}"></span>\`).join('')}</div>\` : ''}
       <button class="fav" onclick="basculerFavori('\${echapper(a.lien)}')" aria-label="\${estFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}" aria-pressed="\${estFav}">\${estFav ? '★' : '☆'}</button>
     </div>
     <div class="corps">
@@ -1091,7 +1156,7 @@ function carteBien(a, note) {
 
       <div>
         <h3>\${echapper(a.titre)}</h3>
-        <p class="lieu">\${echapper(a.rue ? a.rue + ', ' : '')}\${echapper(a.cp ?? '')} \${echapper(a.ville ?? a.commune ?? '')}</p>
+        <p class="lieu">\${echapper(a.rue ? a.rue + ', ' : '')}\${echapper(a.cp ?? '')} \${echapper(a.ville ?? a.commune ?? '')}\${a.region ? \` <span class="tag-region" data-region="\${echapper(a.region)}">\${echapper(a.region)}</span>\` : ''}</p>
       </div>
 
       <div class="prix-ligne">
@@ -1128,6 +1193,7 @@ function ligneTableau(a, note) {
   return \`<tr>
     <td class="num">\${note.score ?? '—'}\${note.fiabilite < 100 ? ' *' : ''}</td>
     <td>\${echapper(a.commune ?? '—')}</td>
+    <td>\${echapper(a.region ?? '—')}</td>
     <td>\${echapper(a.titre)}</td>
     <td class="num">\${a.prix == null ? '—' : a.prix.toLocaleString('fr-BE')}</td>
     <td class="num">\${a.prixM2 ?? '—'}</td>
@@ -1189,6 +1255,10 @@ function rendreKpis(liste) {
     </div>\`;
 }
 
+// Commune mémorisée, appliquée dès que rendreCommunes a construit ses
+// <option> — avant cela, affecter $('commune').value serait sans effet.
+let communeARestaurer = null;
+
 function rendreCommunes(listeSansCommune) {
   const comptes = {};
   for (const a of listeSansCommune) {
@@ -1197,7 +1267,8 @@ function rendreCommunes(listeSansCommune) {
   }
   const entrees = Object.entries(comptes).sort((a, b) => b[1] - a[1]);
   const max = Math.max(1, ...entrees.map(e => e[1]));
-  const actuelle = $('commune').value;
+  const actuelle = communeARestaurer ?? $('commune').value;
+  communeARestaurer = null;
 
   // Le <select> et le graphique lisent le même décompte
   $('commune').innerHTML = \`<option value="*">Toutes (\${listeSansCommune.length})</option>\`
@@ -1222,7 +1293,7 @@ function rendreCommunes(listeSansCommune) {
 
 function filtrerCommune(c) {
   $('commune').value = $('commune').value === c ? '*' : c;
-  rendre();
+  appliquerFiltres(); // cliquer une barre est un filtre comme un autre : on le mémorise
 }
 
 function rendre() {
@@ -1251,27 +1322,132 @@ function rendre() {
 
   if (!triee.length) {
     $('grille').innerHTML = '<div class="vide">Aucun bien ne correspond à ces filtres.</div>';
-    $('corpsTableau').innerHTML = '<tr><td colspan="14" class="vide">Aucun bien ne correspond à ces filtres.</td></tr>';
+    $('corpsTableau').innerHTML = '<tr><td colspan="15" class="vide">Aucun bien ne correspond à ces filtres.</td></tr>';
     return;
   }
+  document.dispatchEvent(new Event('grille-redessinee'));
   $('grille').innerHTML = triee.map(a => carteBien(a, notes.get(a.lien))).join('');
   $('corpsTableau').innerHTML = triee.map(a => ligneTableau(a, notes.get(a.lien))).join('');
 }
 
 /* ------------------------------------------------------------
+   Défilement des photos au survol
+   ------------------------------------------------------------
+   Les URLs vivent dans ANNONCES et pas dans le DOM : les répéter en
+   attribut sur chaque carte ajouterait ~1 Mo à un fichier déjà lourd.
+   Un seul écouteur délégué sur la grille, plutôt qu'un par carte.
+
+   Les photos ne sont PAS préchargées : on ne charge la suivante qu'au
+   moment où le survol la demande, sinon ouvrir le dashboard déclencherait
+   plus de dix mille requêtes d'images.
+   ------------------------------------------------------------ */
+const PHOTOS_PAR_LIEN = new Map(ANNONCES.filter(a => a.photos && a.photos.length > 1).map(a => [a.lien, a.photos]));
+const DELAI_PHOTO = 900;
+let defile = null;
+
+/** Une image cassée ne doit pas vider la carte si on est en train de défiler. */
+function photoEnEchec(img) {
+  const bloc = img.closest('.photo');
+  if (defile && defile.bloc === bloc) {
+    arreterDefile(); // on revient à la couverture, qui elle s'affichait bien
+    return;
+  }
+  bloc.innerHTML = '<div class="absente">Photo indisponible</div>';
+}
+
+function marquerPastille(bloc, i) {
+  const pastilles = bloc.querySelectorAll('.pastille');
+  for (let k = 0; k < pastilles.length; k++) pastilles[k].classList.toggle('active', k === i);
+}
+
+function arreterDefile() {
+  if (!defile) return;
+  clearInterval(defile.minuteur);
+  const img = defile.bloc.querySelector('img');
+  if (img) img.src = defile.photos[0]; // retour à la couverture
+  marquerPastille(defile.bloc, 0);
+  defile = null;
+}
+
+function demarrerDefile(bloc) {
+  const photos = PHOTOS_PAR_LIEN.get(bloc.dataset.lien);
+  const img = bloc.querySelector('img');
+  if (!photos || !img) return;
+  arreterDefile();
+  defile = { bloc, photos, i: 0, minuteur: null };
+  defile.minuteur = setInterval(() => {
+    defile.i = (defile.i + 1) % photos.length;
+    img.src = photos[defile.i];
+    marquerPastille(bloc, defile.i);
+  }, DELAI_PHOTO);
+}
+
+// mouseenter/mouseleave ne remontent pas : on délègue avec mouseover/mouseout,
+// en ignorant les mouvements internes au même bloc photo.
+$('grille').addEventListener('mouseover', e => {
+  const bloc = e.target.closest('.photo');
+  if (!bloc || (defile && defile.bloc === bloc)) return;
+  demarrerDefile(bloc);
+});
+$('grille').addEventListener('mouseout', e => {
+  const bloc = e.target.closest('.photo');
+  if (!bloc || !defile || defile.bloc !== bloc) return;
+  if (bloc.contains(e.relatedTarget)) return; // simple déplacement dans la carte
+  arreterDefile();
+});
+// Redessiner la grille détruit le bloc en cours de défilement : sans ça, le
+// minuteur continuerait à écrire dans un élément détaché.
+document.addEventListener('grille-redessinee', arreterDefile);
+
+/* ------------------------------------------------------------
+   Mémorisation des filtres
+   ------------------------------------------------------------
+   Le thème, la vue, les favoris et les pondérations survivaient déjà à un
+   rechargement ; les filtres étaient les seuls à ne pas le faire. Or on
+   recharge la page à chaque nouveau scrape : choisir une région puis
+   rafraîchir donnait l'impression que le filtre se désactivait tout seul.
+   ------------------------------------------------------------ */
+const CHAMPS_FILTRES = ['q', 'commune', 'region', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains', 'nouveautesSeulement'];
+const estCase = (id) => $(id).type === 'checkbox';
+
+function memoriserFiltres() {
+  ecrire('immo_filtres', Object.fromEntries(CHAMPS_FILTRES.map(id => [id, estCase(id) ? $(id).checked : $(id).value])));
+}
+
+function restaurerFiltres() {
+  const memo = lire('immo_filtres', null);
+  if (!memo) return;
+  for (const id of CHAMPS_FILTRES) {
+    const v = memo[id];
+    if (v === undefined) continue; // champ ajouté depuis la dernière visite
+    if (estCase(id)) $(id).checked = !!v;
+    // Une commune mémorisée peut ne plus exister : ses <option> ne sont
+    // construites qu'au premier rendu, d'où le passage par communeARestaurer.
+    else if (id === 'commune') communeARestaurer = v || null;
+    else $(id).value = v;
+  }
+}
+
+/* ------------------------------------------------------------
    Écoute des filtres
    ------------------------------------------------------------ */
-for (const id of ['q', 'commune', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains', 'nouveautesSeulement']) {
-  $(id).addEventListener('input', rendre);
-  $(id).addEventListener('change', rendre);
+function appliquerFiltres() {
+  memoriserFiltres();
+  rendre();
+}
+
+for (const id of ['q', 'commune', 'region', 'source', 'prixMax', 'prixM2Max', 'chMin', 'gareMax', 'tri', 'favOnly', 'masquerOptions', 'prixConnuSeulement', 'masquerIncertains', 'nouveautesSeulement']) {
+  $(id).addEventListener('input', appliquerFiltres);
+  $(id).addEventListener('change', appliquerFiltres);
 }
 $('btnReset').onclick = () => {
   for (const id of ['q', 'prixMax', 'prixM2Max', 'gareMax']) $(id).value = '';
-  $('commune').value = '*'; $('source').value = '*'; $('chMin').value = '0'; $('tri').value = 'score';
+  $('commune').value = '*'; $('region').value = '*'; $('source').value = '*'; $('chMin').value = '0'; $('tri').value = 'score';
   // "Masquer les biens sous option" et "Prix connu uniquement" sont cochées
   // par défaut : le réinitialiser doit y revenir, pas les décocher.
   $('favOnly').checked = false; $('masquerOptions').checked = true; $('prixConnuSeulement').checked = true; $('masquerIncertains').checked = false; $('nouveautesSeulement').checked = false;
-  rendre();
+  communeARestaurer = null;
+  appliquerFiltres();
 };
 
 /* ------------------------------------------------------------
@@ -1295,6 +1471,7 @@ function rendreDisparus() {
 }
 rendreDisparus();
 
+restaurerFiltres();
 rendre();
 </script>
 </body>

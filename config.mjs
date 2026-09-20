@@ -31,35 +31,63 @@ export const COMMUNES_CIBLES = {
 };
 */
 export const COMMUNES_CIBLES = {
-    Wavre: [1300, 1301], // Wavre, Limal, Basse-Wavre, Bierges
+    // ── Brabant wallon : axe Bruxelles–Namur (ligne 161) ──────────────
+    Wavre: [1300, 1301], // Wavre, Limal, Bierges
     'La Hulpe': [1310],
     Rixensart: [1330, 1331, 1332], // Rixensart, Rosières, Genval
-    'Ottignies-Louvain-la-Neuve': [1340, 1341, 1342, 1348], // dont LLN (1348)
-    'Mont-Saint-Guibert': [1435], // gare sur ligne Bruxelles-Namur, à 2 arrêts de LLN
-    'Court-Saint-Étienne': [1490], // gare sur ligne Bruxelles-Namur (Ottignies-Charleroi)
-    'Grez-Doiceau': [1390], // gare, proche de Wavre, ligne vers Bruxelles via Ottignies
-    'Chaumont-Gistoux': [1325], // proche Wavre/LLN, accès rapide E411
-    Lasne: [1380], // proche Waterloo, accès rapide E411 vers Bruxelles
-    Nivelles: [1400, 1401, 1402], // Nivelles, Baulers, Thines
+    'Ottignies-Louvain-la-Neuve': [1340, 1341, 1342, 1348],
+    'Mont-Saint-Guibert': [1435],
+    Chastre: [1450], // Blanmont, Cortil-Noirmont, Gentinnes, Saint-Géry (gare Chastre)
+    Walhain: [1457], // Nil-Saint-Vincent, Tourinnes-Saint-Lambert
+    Gembloux: [5030, 5031, 5032], // Beuzet, Ernage, Grand-Manil, Lonzée, Sauvenière, Grand-Leez, Bothey, Isnes, Corroy-le-Château
+
+    // ── Autour de Gembloux ─────────────────────────────────────────────
+    Sombreffe: [5140], // Ligny, Boignée, Tongrinne
+    'La Bruyère': [5080], // Rhisnes, Emines, Villers-lez-Heest, Warisoulx
+    Éghezée: [5310], // proche E411, à 10 min de Gembloux
+    Perwez: [1360], // Malèves, Thorembais
+
+    // ── Brabant wallon : est / nord-est ────────────────────────────────
+    'Grez-Doiceau': [1390], // Archennes, Biez, Bossut-Gottechain, Nethen
+    'Chaumont-Gistoux': [1325], // Bonlez, Corroy-le-Grand, Dion-Valmont, Longueville
+    Beauvechain: [1320], // Hamme-Mille, L'Écluse, Nodebais, Tourinnes-la-Grosse
+    Incourt: [1315],
+    Jodoigne: [1370],
+    Hélécine: [1357],
+    'Orp-Jauche': [1350],
+    Ramillies: [1367],
+
+    // ── Brabant wallon : sud / sud-ouest ───────────────────────────────
+    Lasne: [1380], // Ohain, Plancenoit, Couture-St-Germain, Maransart
     Waterloo: [1410],
     "Braine-l'Alleud": [1420, 1421, 1428], // + Ophain-BSI, Lillois-Witterzée
-    Genappe: [1470, 1471, 1472, 1473, 1474], // Bousval, Loupoigne, Vieux-Genappe, Glabais, Ways
-    'Villers-la-Ville': [1495], // + Marbais, Mellery, Sart-Dames-Avelines, Tilly. Gare propre, ligne Ottignies-Charleroi
-    Tubize: [1480], // gare directe vers Bruxelles-Midi (ligne 96/50A)
-    // Communes bruxelloises limitrophes du Brabant wallon, sur ou près de la
-    // ligne Bruxelles-Namur/Luxembourg (gares Etterbeek, Watermael, Boitsfort
-    // déjà dans GARES, voir generate_dashboard.mjs).
+    Nivelles: [1400, 1401, 1402],
+    Genappe: [1470, 1471, 1472, 1473, 1474],
+    'Villers-la-Ville': [1495], // Marbais, Mellery, Sart-Dames-Avelines, Tilly
+    'Court-Saint-Étienne': [1490],
+
+    // ── Brabant wallon : ouest (ligne 96/123) ──────────────────────────
+    Tubize: [1480], // Clabecq, Oisquercq, Saintes
+    Rebecq: [1430], // Bierghes, Quenast
+    Ittre: [1460], // Virginal-Samme, Haut-Ittre
+    'Braine-le-Château': [1440], // Wauthier-Braine
+    'Braine-le-Comte': [7090], // Hainaut, gare importante vers Bruxelles
+
+    // ── Bruxelles limitrophe / ligne 161 ───────────────────────────────
     'Woluwe-Saint-Lambert': [1200],
     'Woluwe-Saint-Pierre': [1150],
     Auderghem: [1160],
-    'Watermael-Boitsfort': [1170], // gares Watermael et Boitsfort dans la commune même
-    Dilbeek: [1700, 1701, 1702, 1703], // + Itterbeek, Groot-Bijgaarden, Schepdaal
-    Asse: [1730, 1731], // + Zellik, Relegem
-    Ternat: [1740, 1741, 1742], // + Wambeek, Sint-Katherina-Lombeek
+    'Watermael-Boitsfort': [1170],
+    Hoeilaart: [1560], // gare sur la ligne 161, Brabant flamand
+
+    // ── Périmètre existant (Brabant flamand / Flandre) ─────────────────
+    Dilbeek: [1700, 1701, 1702, 1703],
+    Asse: [1730, 1731],
+    Ternat: [1740, 1741, 1742],
     Liedekerke: [1770],
-    Vilvoorde: [1800], // + Peutie
-    Zaventem: [1930, 1932, 1933], // + Sint-Stevens-Woluwe, Sterrebeek
-    Denderleeuw: [9470, 9472, 9473], // + Iddergem, Welle
+    Vilvoorde: [1800],
+    Zaventem: [1930, 1932, 1933],
+    Denderleeuw: [9470, 9472, 9473],
 };
 
 /** Index inversé CP (string) → nom de commune, construit une fois. */
@@ -70,6 +98,40 @@ export const CP_VERS_COMMUNE = Object.fromEntries(
 export function estDansPerimetre(cp) {
     return cp != null && Object.hasOwn(CP_VERS_COMMUNE, String(cp));
 }
+
+/**
+ * Région belge déduite du code postal.
+ *
+ * Les tranches sont fixes et exhaustives (arrêté royal sur les codes
+ * postaux), donc aucun scraping n'est nécessaire — et aucune commune ne peut
+ * passer entre les mailles, contrairement à une liste nominative.
+ *
+ * Attention au découpage : Bruxelles s'arrête à 1299 et le Brabant WALLON
+ * commence à 1300 (Wavre). Le Brabant FLAMAND, lui, est coupé en deux
+ * tranches non contiguës — 1500-1999 (Hal-Vilvorde) et 3000-3499 (Louvain) —
+ * séparées par la province d'Anvers.
+ *
+ * La région n'est pas qu'une étiquette géographique : elle fixe les droits
+ * d'enregistrement, très différents d'une région à l'autre.
+ */
+const TRANCHES_REGION = [
+    [1000, 1299, 'Bruxelles'], // les 19 communes
+    [1300, 1499, 'Wallonie'], // Brabant wallon
+    [1500, 1999, 'Flandre'], // Brabant flamand (Hal-Vilvorde)
+    [2000, 2999, 'Flandre'], // Anvers
+    [3000, 3999, 'Flandre'], // Brabant flamand (Louvain) + Limbourg
+    [4000, 7999, 'Wallonie'], // Liège, Namur, Luxembourg, Hainaut
+    [8000, 9999, 'Flandre'], // Flandre occidentale et orientale
+];
+
+export function regionDuCp(cp) {
+    const n = Number(cp);
+    if (!Number.isInteger(n)) return null;
+    return TRANCHES_REGION.find(([min, max]) => n >= min && n <= max)?.[2] ?? null;
+}
+
+/** Les trois régions, dans l'ordre d'affichage du dashboard. */
+export const REGIONS = ['Bruxelles', 'Wallonie', 'Flandre'];
 
 /* ============================================================
    2. CRITÈRES DE RECHERCHE
@@ -125,6 +187,11 @@ export const SITES = {
         cardSelector: 'article.card',
         cookieButtonRegex: /accepter/i,
         lienPattern: '/fr/annonce/',
+        // Élément d'adresse sur la page de DÉTAIL (voir enrichir_adresses.mjs).
+        // Présent sur 12 fiches sondées sur 12 ; il contient parfois
+        // « Demander l'adresse exacte » quand le vendeur ne la publie pas,
+        // cas traité par lib/adresse_detail.mjs.
+        selecteurAdresse: '.classified__information--address',
         // La recherche "/recherche/maison/a-vendre" n'est PAS stricte : une
         // fois les résultats exacts épuisés, Immoweb complète avec d'autres
         // catégories (appartements, immeubles mixtes...). Constaté sur un
@@ -137,9 +204,15 @@ export const SITES = {
         lienExclusion: /\/fr\/annonce\/(appartement|immeuble-a-appartements|immeuble-mixte|penthouse|duplex|triplex|rez-de-chaussee|studio|loft|appartement-de-service)\//i,
         paginationParam: 'page',
         paginationStart: 1,
-        // Inventaire de loin le plus grand des 6 portails (~970 résultats sur
-        // le périmètre avant filtrage) : 60 par page, jusqu'à ~17 pages.
-        maxPages: 20,
+        // Inventaire de loin le plus grand des 7 portails : 60 résultats par
+        // page. ⚠️ À RELIRE quand le périmètre s'élargit — avec 26 communes
+        // Immoweb annonçait ~970 biens (17 pages), avec 44 il en annonce
+        // 1400 et propose jusqu'à la page 47. Le plafond de 20 pages tronquait
+        // donc la recherche à 1200, et les biens tombés hors fenêtre
+        // ressortaient ensuite en fausses « disparitions » dans l'historique.
+        // La pagination s'arrête d'elle-même dès qu'une page ne renvoie rien,
+        // donc un plafond généreux ne coûte rien quand l'offre est plus petite.
+        maxPages: 30,
         // Tout le reste (prix, surfaces, chambres, "1410 Waterloo") suit les
         // conventions déjà gérées nativement, sans hint dédié.
         hints: {},
@@ -345,6 +418,14 @@ export const FICHIERS = {
     historique: 'historique.json', // mémoire d'un run à l'autre (nouveau/baisse/disparu)
     disparus: 'disparus.json', // biens absents du dernier scrape, pour affichage
     cacheGeocode: 'geocode-cache.json',
+    // Adresses relevées sur les pages de détail. Comme historique.json, ce
+    // fichier n'est PAS régénérable à volonté : le supprimer impose de
+    // revisiter des centaines de fiches (~1/seconde).
+    cacheAdresses: 'adresses-cache.json',
+    // Récolte par portail, run après run : sert à repérer qu'un scraper s'est
+    // cassé (voir lib/sante.mjs). Régénérable, mais il faut quelques runs
+    // avant que la surveillance redevienne utile.
+    sante: 'sante-portails.json',
     dashboard: 'dashboard.html',
 };
 
@@ -361,4 +442,19 @@ export const FICHIERS = {
 export const HISTORIQUE = {
     joursAvantDisparu: 2,
     joursPurge: 45,
+};
+
+/**
+ * Seuils du contrôle de santé des portails (lib/sante.mjs).
+ *   seuilChute : baisse de récolte à partir de laquelle on alerte. 0,4 laisse
+ *     passer la variation normale de l'offre (±20-30 % d'un run à l'autre)
+ *     tout en attrapant les vraies pannes — ERA était tombé de 78 %, Trior
+ *     de 100 %.
+ *   minRuns : nombre de runs de référence avant de juger quoi que ce soit.
+ *   maxRuns : taille de l'historique conservé.
+ */
+export const SANTE = {
+    seuilChute: 0.4,
+    minRuns: 2,
+    maxRuns: 20,
 };
