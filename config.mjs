@@ -72,6 +72,7 @@ export const COMMUNES_CIBLES = {
     Ittre: [1460], // Virginal-Samme, Haut-Ittre
     'Braine-le-Château': [1440], // Wauthier-Braine
     'Braine-le-Comte': [7090], // Hainaut, gare importante vers Bruxelles
+    Soignies: [7060, 7063], // Hainaut, ligne 96 directe vers Bruxelles-Midi
 
     // ── Bruxelles limitrophe / ligne 161 ───────────────────────────────
     'Woluwe-Saint-Lambert': [1200],
@@ -150,6 +151,21 @@ export const CRITERES = {
 };
 
 /* ============================================================
+   RÉFÉRENCE DE MARCHÉ
+   ============================================================ */
+
+export const MARCHE = {
+    /**
+     * Nombre minimum de biens dans une commune pour publier sa médiane €/m².
+     *
+     * 8 couvre 39 communes sur 44 et 98 % des biens ayant un prix au m².
+     * En dessous, la médiane est dominée par le bruit — une commune à trois
+     * biens donnerait un chiffre faussement précis, pire qu'une case vide.
+     */
+    minEchantillon: 8,
+};
+
+/* ============================================================
    3. PORTAILS
    ============================================================
    `cardSelector` doit viser le CONTENEUR de la carte, pas un lien interne.
@@ -178,6 +194,30 @@ export const CRITERES = {
    ============================================================ */
 
 export const SITES = {
+    'www.realo.be': {
+        source: 'Realo',
+        // Le conteneur de la carte ; les liens d'annonce n'ont pas de motif
+        // distinctif dans leur chemin (/fr/{rue}-{cp}-{commune}/{id}), donc
+        // c'est le sélecteur de carte qui fait le travail de cadrage.
+        cardSelector: 'div.component-estate-grid-item',
+        lienPattern: '/fr/',
+        /*
+         * Realo publie une page de valeur estimée pour CHAQUE adresse de
+         * Belgique, sous /fr/explorer/{id}. Ces cartes se mélangent aux
+         * annonces dans les résultats : fourchette de prix (« 300 000 € -
+         * 400 000 € »), ni surface ni chambres. Mesuré : 471 sur 942, qui
+         * auraient pollué les médianes de marché avec des prix inventés.
+         * Les vraies annonces vivent sous /fr/{adresse}/{id}.
+         */
+        lienExclusion: /\/fr\/explorer\//i,
+        paginationParam: 'page',
+        paginationStart: 1,
+        // Mesuré : 61 maisons à Braine-l'Alleud, 31 à Ternat, ~25 par page.
+        // 5 pages = 125 biens par commune, jamais atteint en pratique, et
+        // cela borne la charge que ce portail lent impose à la file.
+        maxPages: 5,
+        hints: {},
+    },
     'www.immoweb.be': {
         source: 'Immoweb',
         // Deux gabarits de carte coexistent (biens "premium" et biens
@@ -258,11 +298,16 @@ export const SITES = {
     'www.era.be': {
         source: 'ERA',
         cardSelector: 'article:has(h2), article:has(h3)',
+        // ERA pagine par DÉCALAGE de résultats, pas par numéro de page :
+        // pager[offset]=36, 72, 108… Le commentaire précédent affirmait un
+        // « scroll infini depuis une seule URL » ; c'est faux, le défilement
+        // s'arrête à 36 cartes alors que la page en annonce 97. Les liens
+        // « 2 », « 3 », « Suivant » du pied de liste donnent la convention.
+        paginationParam: 'pager[offset]',
+        paginationPas: 36,
+        maxPages: 10,
         cookieButtonRegex: /accepter/i,
         lienPattern: '/a-vendre/',
-        // La page ERA charge tout en scroll infini depuis une seule URL :
-        // enchaîner ?page= en plus créait un recouvrement massif de doublons.
-        paginationParam: null,
         // Tout est libellé ("3 chbre(s)", "193 m² de surf. hab."), sauf le PEB
         // qui apparaît en lettre seule en fin de carte (89 cartes sur 91).
         hints: { pebNu: true },
@@ -384,6 +429,61 @@ function urlImmoweb() {
     return `https://www.immoweb.be/fr/recherche/maison/a-vendre?${p.toString().replace(/%2C/g, ',')}`;
 }
 
+/**
+ * Century21 filtre par code postal, un paramètre `location` par CP.
+ * Mesuré : passer de 15 à 72 codes postaux fait passer la première page de
+ * 22 à 80 cartes.
+ */
+function urlCentury21() {
+    const p = new URLSearchParams({
+        listingType: 'FOR_SALE',
+        type: 'HOUSE',
+        countryCode: 'be',
+        bedroomsMin: String(CRITERES.chambresMin),
+        priceMin: String(CRITERES.prixMin),
+        priceMax: String(CRITERES.prixMax),
+    });
+    return `https://www.century21.be/fr/a-vendre/maison?${TOUS_LES_CP.map((cp) => `location=${cp}`).join('&')}&${p}`;
+}
+
+/**
+ * Realo : une recherche par commune, car il n'accepte qu'une localité à la fois.
+ *
+ * On lui passe un simple code postal (`q=1740`) plutôt qu'un slug construit :
+ * il le résout lui-même vers sa page canonique et ramène au passage les codes
+ * voisins de la commune (1740 → 1740, 1741, 1742). Un slug deviné échouerait
+ * sur les noms composés, et on n'a pas sa table de correspondance.
+ *
+ * Un seul code postal par commune suffit donc, d'où 45 URLs et non 72.
+ */
+function urlsRealo() {
+    const p = new URLSearchParams({
+        priceMin: String(CRITERES.prixMin),
+        priceMax: String(CRITERES.prixMax),
+        bedroomsMin: String(CRITERES.chambresMin),
+    });
+    return Object.values(COMMUNES_CIBLES).map(
+        (cps) => `https://www.realo.be/fr/search?q=${cps[0]}&ways%5B%5D=SALE&types%5B%5D=HOUSE&${p}`,
+    );
+}
+
+/**
+ * Trevi : aucun filtre de localité possible.
+ *
+ * Son paramètre `zips[]=CP_LIBELLÉ` est mort — vérifié sur le site : 0, 1, 5,
+ * 20 ou 60 localités renvoient exactement les mêmes 14 cartes, et au-delà de
+ * ~190 l'URL devient trop longue et ne renvoie plus rien. L'ancienne URL du
+ * projet, qui portait 15 localités, ne ramenait donc déjà plus que le
+ * catalogue national non filtré.
+ *
+ * On assume : on parcourt tout son catalogue (quelques centaines de maisons,
+ * 14 par page) et `parse_annonces.mjs` écarte ce qui est hors périmètre.
+ * C'est plus robuste qu'un filtre serveur qu'on ne contrôle pas.
+ */
+function urlTrevi() {
+    return 'https://www.trevi.be/fr/acheter-bien-immobilier/maisons?purpose=0&officeid=0&estatecategory=1';
+}
+
 export const URLS = [
     urlImmoweb(),
     urlImmovlan(),
@@ -403,9 +503,11 @@ export const URLS = [
 
     // Corrigé : priceMax était à 5000000 (5 M€) au lieu de 500000 → des biens
     // à 899.000 € remontaient en tête de classement.
-    'https://www.century21.be/fr/a-vendre/maison?listingType=FOR_SALE&type=HOUSE&condition=GOOD&condition=MINT&condition=NEW&condition=TO_RENOVATE&condition=TO_REFRESH&condition=READY_TO_USE&countryCode=be&garden=true&location=1310&location=1410&location=1420&location=1470&location=1400&location=1330&location=1340&location=1300&location=1800&location=1930&location=1730&location=1740&location=1770&location=9470&location=1700&parking=true&bedroomsMin=2&priceMin=300000&priceMax=500000',
+    urlCentury21(),
 
-    'https://www.trevi.be/fr/acheter-bien-immobilier/maisons?purpose=0&pagenumber=&officeid=0&agencyid=&siteid=&estatecategory=1&zips%5B%5D=1300_WAVRE&zips%5B%5D=1310_LA+HULPE&zips%5B%5D=1330_RIXENSART&zips%5B%5D=1340_Ottignies-Louvain-la-Neuve&zips%5B%5D=1400_NIVELLES&zips%5B%5D=1410_WATERLOO&zips%5B%5D=1420_Braine-l%27Alleud&zips%5B%5D=1470_GENAPPE&zips%5B%5D=1700_DILBEEK&zips%5B%5D=1730_ASSE+&zips%5B%5D=1740_TERNAT&zips%5B%5D=1770_LIEDEKERKE&zips%5B%5D=1800_VILVOORDE&zips%5B%5D=1930_ZAVENTEM&zips%5B%5D=9470_DENDERLEEUW',
+    urlTrevi(),
+
+    ...urlsRealo(),
 ];
 
 /* ============================================================

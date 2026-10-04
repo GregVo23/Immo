@@ -65,6 +65,10 @@ async function masquerSuperpositions(page) {
                 '[id^="hs-web-interactives"]',
                 '#hs-modal-overlay',
                 '.modal-backdrop',
+                // Realo : son bandeau de consentement couvre toute la page et
+                // intercepte les clics (même symptôme que la fenêtre HubSpot
+                // de Trior, qui faisait échouer 56 tentatives de clic).
+                '[id*="usercentrics"]',
             ];
             let retires = 0;
             for (const s of selecteurs) {
@@ -316,6 +320,23 @@ const crawler = new PlaywrightCrawler({
     requestHandlerTimeoutSecs: 180,
     maxRequestRetries: 2,
 
+    /*
+     * Concurrence bridée, et c'est le résultat d'une panne réelle.
+     *
+     * Crawlee monte seul à 5 onglets parallèles. Tant qu'il y avait 7 URLs,
+     * tout allait bien. En ajoutant les 45 URLs de Realo — un portail lent —
+     * le run s'est effondré : 340 expirations de navigation à 60 s, dont
+     * 315 sur Realo, et les créneaux monopolisés par ses tentatives ont
+     * affamé les autres portails. Immoweb est tombé à 32 cartes au lieu de
+     * 1404, Trior et Trevi à zéro. La file est partagée : un portail lent
+     * pénalise tous les autres.
+     *
+     * 3 onglets suffisent largement (le goulot est le réseau, pas le CPU) et
+     * la marge de 120 s absorbe les pages lentes sans déclencher de reprise.
+     */
+    maxConcurrency: 3,
+    navigationTimeoutSecs: 120,
+
     launchContext: {
         launchOptions: {
             // `channel: 'chromium'` sélectionne le moteur headless récent.
@@ -394,7 +415,13 @@ const crawler = new PlaywrightCrawler({
         if (config.paginationParam && cartes.length > 0 && pageNumber < (config.paginationStart ?? 1) + maxPages - 1) {
             const suivante = pageNumber + 1;
             const url = new URL(request.url);
-            url.searchParams.set(config.paginationParam, String(suivante));
+            // Deux conventions. La plupart des portails numérotent les pages
+            // (page=2, 3...). ERA compte en DÉCALAGE de résultats
+            // (pager[offset]=36, 72...) : sans `paginationPas`, on lui
+            // demandait « page 2 » qu'il ignorait, et on s'arrêtait à 36
+            // cartes sur 97 annoncées.
+            const valeur = config.paginationPas ? (suivante - (config.paginationStart ?? 1)) * config.paginationPas : suivante;
+            url.searchParams.set(config.paginationParam, String(valeur));
             log.info(`➡️ Page ${suivante} pour ${config.source}...`);
             await crawler.addRequests([{ url: url.toString(), userData: { page: suivante } }]);
         } else if (config.paginationParam) {

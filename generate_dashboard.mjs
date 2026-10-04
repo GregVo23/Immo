@@ -15,7 +15,11 @@
 
 import './lib/racine.mjs'; // doit rester en premier : fixe le dossier de travail
 import fs from 'fs';
-import { FICHIERS } from './config.mjs';
+import { FICHIERS, MARCHE } from './config.mjs';
+import { calculerMarche, ecartAuMarche } from './lib/marche.mjs';
+// Liste générée depuis le référentiel SNCB : voir maj_gares.mjs.
+import { GARES } from './lib/gares.mjs';
+import { cleForte } from './lib/parse.mjs';
 
 /* ============================================================
    1. RÉFÉRENTIELS GÉOGRAPHIQUES
@@ -23,38 +27,6 @@ import { FICHIERS } from './config.mjs';
 
 const BRUXELLES_CENTRE = { lat: 50.8466, lon: 4.3528 };
 
-const GARES = [
-    { nom: 'Bruxelles-Central', lat: 50.8455, lon: 4.3572 },
-    { nom: 'Bruxelles-Midi', lat: 50.836, lon: 4.3352 },
-    { nom: 'Bruxelles-Nord', lat: 50.86, lon: 4.3612 },
-    { nom: 'Bruxelles-Luxembourg', lat: 50.8377, lon: 4.3796 },
-    { nom: 'Etterbeek', lat: 50.8322, lon: 4.3897 },
-    { nom: 'Schaerbeek', lat: 50.8735, lon: 4.3746 },
-    { nom: 'Watermael', lat: 50.8093, lon: 4.4166 },
-    { nom: 'Boitsfort', lat: 50.801, lon: 4.4237 },
-    { nom: 'Halle', lat: 50.7377, lon: 4.2417 },
-    { nom: 'Malines', lat: 51.0182, lon: 4.4805 },
-    { nom: 'Louvain', lat: 50.8809, lon: 4.7166 },
-    { nom: 'Ottignies', lat: 50.6653, lon: 4.5667 },
-    { nom: 'Louvain-la-Neuve', lat: 50.6693, lon: 4.6152 },
-    { nom: 'Waterloo', lat: 50.7186, lon: 4.3986 },
-    { nom: "Braine-l'Alleud", lat: 50.6844, lon: 4.3667 },
-    { nom: 'Nivelles', lat: 50.5975, lon: 4.3269 },
-    { nom: 'Wavre', lat: 50.7167, lon: 4.6167 },
-    { nom: 'La Hulpe', lat: 50.7314, lon: 4.4936 },
-    { nom: 'Rixensart', lat: 50.7186, lon: 4.5236 },
-    { nom: 'Genval', lat: 50.7108, lon: 4.5069 },
-    { nom: 'Genappe', lat: 50.6136, lon: 4.4519 },
-    { nom: 'Villers-la-Ville', lat: 50.5973, lon: 4.5217 },
-    { nom: 'Vilvoorde', lat: 50.9275, lon: 4.4239 },
-    { nom: 'Zaventem', lat: 50.8694, lon: 4.4728 },
-    { nom: 'Asse', lat: 50.9058, lon: 4.2003 },
-    { nom: 'Ternat', lat: 50.8814, lon: 4.1494 },
-    { nom: 'Liedekerke', lat: 50.8722, lon: 4.0847 },
-    { nom: 'Denderleeuw', lat: 50.8825, lon: 4.0742 },
-    { nom: 'Sint-Martens-Bodegem', lat: 50.8503, lon: 4.2247 },
-    { nom: 'Groot-Bijgaarden', lat: 50.8703, lon: 4.2653 },
-];
 
 const ACCES_AUTOROUTE = [
     { nom: 'R0 / E19 Hal', lat: 50.7378, lon: 4.2358 },
@@ -293,6 +265,35 @@ if (etales) console.log(`   🗺️ ${etales} bien(s) étalés autour de leur ce
        sombre : 6,6 à 7,0 là où AA demande 4,5.
    ============================================================ */
 
+/*
+ * Clé d'identité stable, pour que « masquer un bien » tienne dans le temps.
+ *
+ * Les favoris s'indexent sur `lien`, ce qui suffit pour eux. Pour une
+ * exclusion c'est insuffisant : quand la fusion inter-portails change de
+ * source dominante d'un run à l'autre (elle choisit l'exemplaire le plus
+ * complet, ce qui varie), le lien principal change et le bien masqué
+ * réapparaîtrait. On joint donc la clé d'adresse — même rue, même numéro,
+ * même code postal — qui, elle, ne bouge pas. Elle n'existe que pour les
+ * biens à adresse exacte ; les autres retombent sur le lien.
+ */
+
+/*
+ * Référence de marché : médiane du prix au m² dans chaque commune, et écart
+ * de chaque bien à la sienne.
+ *
+ * Calculé ici et non dans le navigateur, volontairement : la référence doit
+ * porter sur TOUT le marché connu. La calculer sur la sélection affichée
+ * ferait bouger la médiane à chaque filtre — un bien deviendrait « sous le
+ * marché » simplement parce qu'on a masqué ses voisins plus chers.
+ */
+const marche = calculerMarche(annonces, { minEchantillon: MARCHE.minEchantillon });
+const annoncesHtml = annonces.map((a) => ({ ...a, cleAdresse: cleForte(a), marche: ecartAuMarche(a, marche) }));
+{
+    const avec = annoncesHtml.filter((a) => a.marche).length;
+    const sous = annoncesHtml.filter((a) => a.marche && a.marche.pct <= -10).length;
+    console.log(`   📊 Référence de marché sur ${marche.size} commune(s) — ${avec}/${annonces.length} biens situés, dont ${sous} à 10 % ou plus sous leur marché local.`);
+}
+
 const html = `<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -493,6 +494,18 @@ button[aria-pressed="true"] { background: var(--series-1); border-color: var(--s
 .tag-region[data-region="Bruxelles"] { background: var(--region-bxl-fond); color: var(--region-bxl-texte); border-color: var(--region-bxl-bord); }
 .tag-region[data-region="Wallonie"]  { background: var(--region-wal-fond); color: var(--region-wal-texte); border-color: var(--region-wal-bord); }
 .tag-region[data-region="Flandre"]   { background: var(--region-vla-fond); color: var(--region-vla-texte); border-color: var(--region-vla-bord); }
+/* Écart au marché local. Le signe et le nombre portent l'information ; la
+   couleur n'est qu'un renfort, jamais seule (voir la note de palette). */
+.marche { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; border: 1px solid var(--border); color: var(--text-secondary); }
+.marche.dessous { color: var(--success-text); border-color: color-mix(in srgb, var(--success-text) 35%, transparent); background: color-mix(in srgb, var(--success-text) 8%, transparent); }
+.marche.dessus { color: var(--text-muted); }
+/* Un bien masqué reste lisible quand on demande à le revoir, mais doit se
+   distinguer au premier coup d'œil des biens actifs. */
+.bien.masque { opacity: 0.55; border-style: dashed; }
+.bien.masque .photo img { filter: grayscale(0.7); }
+.photo .exclure { position: absolute; top: 8px; right: 44px; width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer; background: rgba(0,0,0,0.45); color: #fff; font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.photo .exclure:hover { background: rgba(0,0,0,0.72); }
+.photo .exclure:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
 
 /* Jauge de score : rampe séquentielle (magnitude), piste = pas clair de la même rampe */
 .jauge-bloc { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: baseline; }
@@ -640,6 +653,7 @@ tbody tr:hover { background: var(--page); }
       <select id="tri">
         <option value="score">Score décroissant</option>
         <option value="prixM2">Prix/m² croissant</option>
+        <option value="marche">Écart au marché local croissant</option>
         <option value="prix">Prix croissant</option>
         <option value="gare">Distance gare croissante</option>
         <option value="surface">Surface décroissante</option>
@@ -651,6 +665,8 @@ tbody tr:hover { background: var(--page); }
     <label class="case"><input type="checkbox" id="prixConnuSeulement" checked> Prix connu uniquement</label>
     <label class="case"><input type="checkbox" id="masquerIncertains"> Masquer les données incertaines</label>
     <label class="case"><input type="checkbox" id="nouveautesSeulement"> Nouveautés seulement</label>
+    <label class="case"><input type="checkbox" id="voirMasques"> <span id="libelleMasques">Aucun bien masqué</span></label>
+    <button id="btnToutReafficher" hidden>Tout réafficher</button>
     <button id="btnReset">Réinitialiser</button>
   </div>
 
@@ -719,9 +735,10 @@ tbody tr:hover { background: var(--page); }
       </caption>
       <thead><tr>
         <th class="num">Score</th><th>Commune</th><th>Région</th><th>Titre</th>
-        <th class="num">Prix</th><th class="num">€/m²</th><th class="num">Ch.</th>
+        <th class="num">Prix</th><th class="num">€/m²</th><th class="num" title="Écart à la médiane de la commune">vs marché</th><th class="num">Ch.</th>
         <th class="num">Hab.</th><th class="num">Terrain</th><th>Gare</th><th class="num">km</th>
-        <th>PEB</th><th>Statut</th><th>Portail</th><th>Lien</th>
+        <th>PEB</th><th class="num">Bâti</th><th>État</th><th class="num">RC</th>
+        <th>Statut</th><th>Portail</th><th>Lien</th>
       </tr></thead>
       <tbody id="corpsTableau"></tbody>
     </table>
@@ -730,7 +747,7 @@ tbody tr:hover { background: var(--page); }
 </div>
 
 <script>
-const ANNONCES = ${JSON.stringify(annonces)};
+const ANNONCES = ${JSON.stringify(annoncesHtml)};
 const DISPARUS = ${JSON.stringify(disparus)};
 const GARES = ${JSON.stringify(GARES)};
 const ACCES_AUTOROUTE = ${JSON.stringify(ACCES_AUTOROUTE)};
@@ -952,11 +969,12 @@ function initCarte() {
     }, { collapsed: false })
     .addTo(carte);
 
-  // Les 41 libellés permanents (29 gares + 12 accès) se chevauchent et
-  // couvrent toute la région bruxelloise vus de loin. On ne les affiche qu'à
-  // partir du zoom 11, là où il y a la place ; en dessous, les marqueurs
-  // restent visibles et leur nom s'affiche au survol.
-  const majZoom = () => $('carte').classList.toggle('zoom-faible', carte.getZoom() < 11);
+  // Les libellés permanents (114 gares + 12 accès) se chevauchent et
+  // couvrent toute la région vus de loin. Ils n'apparaissent donc qu'à
+  // partir du zoom 12, là où il y a la place ; en dessous, les marqueurs
+  // restent cliquables et le nom s'affiche au survol. Le seuil est passé
+  // de 11 à 12 quand la liste des gares est passée de 29 à 114.
+  const majZoom = () => $('carte').classList.toggle('zoom-faible', carte.getZoom() < 12);
   carte.on('zoomend', majZoom);
   majZoom();
 
@@ -1044,6 +1062,7 @@ function filtrer(ignorerCommune = false) {
   const commune = $('commune').value;
   const source = $('source').value;
   const region = $('region').value;
+  const voirMasques = $('voirMasques').checked;
   const prixMax = parseInt($('prixMax').value, 10) || Infinity;
   const prixM2Max = parseInt($('prixM2Max').value, 10) || Infinity;
   const chMin = parseInt($('chMin').value, 10) || 0;
@@ -1055,6 +1074,10 @@ function filtrer(ignorerCommune = false) {
   const nouveautesSeulement = $('nouveautesSeulement').checked;
 
   return ANNONCES.filter(a => {
+    // Les biens masqués disparaissent de TOUTES les vues — grille, carte,
+    // tableau, KPI et graphique des communes passent tous par ici — sauf
+    // quand on demande explicitement à les revoir pour en restaurer un.
+    if (!voirMasques && estExclu(a)) return false;
     if (favOnly && !favoris.includes(a.lien)) return false;
     if (masquerOptions && a.statut !== 'disponible') return false;
     // Certains portails (Trior sous option, notamment) n'affichent aucun prix
@@ -1087,6 +1110,9 @@ function trier(liste, notes) {
   const inf = (v) => v == null ? Infinity : v;
   if (cle === 'score')   copie.sort((a, b) => (notes.get(b.lien)?.score ?? -1) - (notes.get(a.lien)?.score ?? -1));
   if (cle === 'prixM2')  copie.sort((a, b) => inf(a.prixM2) - inf(b.prixM2));
+  // Les biens sans référence locale (échantillon communal trop mince) sont
+  // renvoyés en fin de liste plutôt que de passer pour des bonnes affaires.
+  if (cle === 'marche') copie.sort((a, b) => inf(a.marche?.pct) - inf(b.marche?.pct));
   if (cle === 'prix')    copie.sort((a, b) => inf(a.prix) - inf(b.prix));
   if (cle === 'gare')    copie.sort((a, b) => inf(a.distanceGareKm) - inf(b.distanceGareKm));
   if (cle === 'surface') copie.sort((a, b) => (b.surfaceHabitable ?? -1) - (a.surfaceHabitable ?? -1));
@@ -1138,12 +1164,14 @@ function badgesDe(a, note) {
 
 function carteBien(a, note) {
   const estFav = favoris.includes(a.lien);
+  const masque = estExclu(a);
   const score = note.score;
   return \`
-  <article class="bien">
+  <article class="bien\${masque ? ' masque' : ''}">
     <div class="photo" data-lien="\${echapper(a.lien)}">
       \${a.imageUrl ? \`<img src="\${echapper(a.imageUrl)}" alt="" loading="lazy" onerror="photoEnEchec(this)">\` : '<div class="absente">Pas de photo</div>'}
       \${a.photos && a.photos.length > 1 ? \`<div class="pastilles" aria-hidden="true">\${a.photos.map((_, i) => \`<span class="pastille\${i === 0 ? ' active' : ''}"></span>\`).join('')}</div>\` : ''}
+      <button class="exclure" onclick="basculerExclusion('\${echapper(a.lien)}')" aria-label="\${masque ? 'Réafficher ce bien' : 'Masquer ce bien'}" title="\${masque ? 'Réafficher ce bien' : 'Masquer ce bien — il ne réapparaîtra plus'}">\${masque ? '↺' : '✕'}</button>
       <button class="fav" onclick="basculerFavori('\${echapper(a.lien)}')" aria-label="\${estFav ? 'Retirer des favoris' : 'Ajouter aux favoris'}" aria-pressed="\${estFav}">\${estFav ? '★' : '☆'}</button>
     </div>
     <div class="corps">
@@ -1162,6 +1190,7 @@ function carteBien(a, note) {
       <div class="prix-ligne">
         <span class="prix">\${euro(a.prix)}</span>
         \${a.prixM2 ? \`<span class="prix-m2">\${a.prixM2.toLocaleString('fr-BE')} €/m²</span>\` : ''}
+        \${a.marche ? \`<span class="marche \${a.marche.pct <= -3 ? 'dessous' : a.marche.pct >= 3 ? 'dessus' : ''}" title="Médiane de \${echapper(a.commune)} : \${a.marche.mediane.toLocaleString('fr-BE')} €/m², calculée sur \${a.marche.n} bien(s) du périmètre">\${a.marche.pct > 0 ? '+' : ''}\${a.marche.pct} % / \${echapper(a.commune)}</span>\` : ''}
       </div>
 
       <div class="faits">
@@ -1171,6 +1200,11 @@ function carteBien(a, note) {
         \${a.surfaceTerrain ? \`<span class="fait">\${a.surfaceTerrain} m² terrain</span>\` : ''}
         \${a.surfaceConstructible ? \`<span class="fait" title="Emprise bâtissable — ni la surface habitable ni le jardin">\${a.surfaceConstructible} m² constructible</span>\` : ''}
         \${a.typeBien ? \`<span class="fait">\${echapper(a.typeBien)}</span>\` : ''}
+        \${a.anneeConstruction ? \`<span class="fait" title="Année de construction, lue sur la fiche du bien">bâti \${a.anneeConstruction}</span>\` : ''}
+        \${a.facades ? \`<span class="fait" title="4 façades = maison isolée, 3 = mitoyenne d'un côté, 2 = mitoyenne des deux côtés">\${a.facades} façades</span>\` : ''}
+        \${a.etatBien ? \`<span class="fait" title="État du bien tel que déclaré par le vendeur">\${echapper(a.etatBien)}</span>\` : ''}
+        \${a.pebKwh ? \`<span class="fait" title="Consommation en kWh/m²/an — comparable entre régions, contrairement à la lettre PEB dont le barème diffère">\${a.pebKwh} kWh/m²/an</span>\` : ''}
+        \${a.revenuCadastral ? \`<span class="fait" title="Revenu cadastral : base de calcul du précompte immobilier, dû chaque année. Le montant réel dépend de la région et des additionnels communaux.">RC \${a.revenuCadastral.toLocaleString('fr-BE')} €</span>\` : ''}
         \${a.joursEnLigne != null ? \`<span class="fait">\${a.joursEnLigne} j en ligne</span>\` : ''}
       </div>
 
@@ -1197,12 +1231,16 @@ function ligneTableau(a, note) {
     <td>\${echapper(a.titre)}</td>
     <td class="num">\${a.prix == null ? '—' : a.prix.toLocaleString('fr-BE')}</td>
     <td class="num">\${a.prixM2 ?? '—'}</td>
+    <td class="num" title="\${a.marche ? 'Médiane ' + echapper(a.commune) + ' : ' + a.marche.mediane.toLocaleString('fr-BE') + ' €/m² sur ' + a.marche.n + ' biens' : 'Échantillon communal insuffisant'}">\${a.marche ? (a.marche.pct > 0 ? '+' : '') + a.marche.pct + ' %' : '—'}</td>
     <td class="num">\${a.chambres ?? '—'}</td>
     <td class="num">\${a.surfaceHabitable ?? '—'}</td>
     <td class="num">\${a.surfaceTerrain ?? '—'}</td>
     <td>\${echapper(a.gareNom ?? '—')}</td>
     <td class="num">\${a.distanceGareKm ?? '—'}</td>
-    <td>\${echapper(a.peb ?? '—')}</td>
+    <td>\${a.peb ? echapper(a.peb) + (a.pebKwh ? \` (\${a.pebKwh})\` : '') : (a.pebKwh ? a.pebKwh + ' kWh' : '—')}</td>
+    <td class="num">\${a.anneeConstruction ?? '—'}</td>
+    <td>\${echapper(a.etatBien ?? '—')}</td>
+    <td class="num">\${a.revenuCadastral ? a.revenuCadastral.toLocaleString('fr-BE') : '—'}</td>
     <td>\${a.statut === 'disponible' ? '—' : echapper(a.statut)}\${a.joursEnLigne != null ? ' · ' + a.joursEnLigne + ' j' : ''}</td>
     <td>\${echapper((a.sources ?? [a.source]).join(' · '))}</td>
     <td><a href="\${echapper(a.lien)}" target="_blank" rel="noopener">ouvrir</a></td>
@@ -1322,7 +1360,7 @@ function rendre() {
 
   if (!triee.length) {
     $('grille').innerHTML = '<div class="vide">Aucun bien ne correspond à ces filtres.</div>';
-    $('corpsTableau').innerHTML = '<tr><td colspan="15" class="vide">Aucun bien ne correspond à ces filtres.</td></tr>';
+    $('corpsTableau').innerHTML = '<tr><td colspan="19" class="vide">Aucun bien ne correspond à ces filtres.</td></tr>';
     return;
   }
   document.dispatchEvent(new Event('grille-redessinee'));
@@ -1400,6 +1438,47 @@ $('grille').addEventListener('mouseout', e => {
 document.addEventListener('grille-redessinee', arreterDefile);
 
 /* ------------------------------------------------------------
+   Biens masqués
+   ------------------------------------------------------------
+   Masquer est délibéré et durable : contrairement aux filtres, ce n'est pas
+   remis à zéro par « Réinitialiser ». On mémorise deux identifiants par bien
+   — son lien ET sa clé d'adresse quand elle existe — parce que le lien
+   principal change si la fusion inter-portails change de source dominante
+   d'un run à l'autre. Sans la clé d'adresse, un bien masqué réapparaîtrait.
+   ------------------------------------------------------------ */
+let exclus = lire('immo_exclus', []);
+
+function estExclu(a) {
+  return exclus.some(e => e.lien === a.lien || (e.cle && e.cle === a.cleAdresse));
+}
+
+function basculerExclusion(lien) {
+  const a = ANNONCES.find(x => x.lien === lien);
+  if (!a) return;
+  exclus = estExclu(a)
+    ? exclus.filter(e => e.lien !== a.lien && !(e.cle && e.cle === a.cleAdresse))
+    : [...exclus, { lien: a.lien, cle: a.cleAdresse ?? null, titre: a.titre, le: new Date().toISOString().slice(0, 10) }];
+  ecrire('immo_exclus', exclus);
+  majCompteurMasques();
+  rendre();
+}
+
+function toutReafficher() {
+  if (!exclus.length) return;
+  exclus = [];
+  ecrire('immo_exclus', exclus);
+  majCompteurMasques();
+  rendre();
+}
+
+function majCompteurMasques() {
+  const n = ANNONCES.filter(estExclu).length;
+  $('libelleMasques').textContent = n ? \`Afficher les \${n} bien(s) masqué(s)\` : 'Aucun bien masqué';
+  $('voirMasques').disabled = n === 0;
+  $('btnToutReafficher').hidden = n === 0;
+  if (!n) $('voirMasques').checked = false;
+}
+/* ------------------------------------------------------------
    Mémorisation des filtres
    ------------------------------------------------------------
    Le thème, la vue, les favoris et les pondérations survivaient déjà à un
@@ -1440,6 +1519,9 @@ for (const id of ['q', 'commune', 'region', 'source', 'prixMax', 'prixM2Max', 'c
   $(id).addEventListener('input', appliquerFiltres);
   $(id).addEventListener('change', appliquerFiltres);
 }
+$('voirMasques').addEventListener('change', rendre);
+$('btnToutReafficher').onclick = toutReafficher;
+
 $('btnReset').onclick = () => {
   for (const id of ['q', 'prixMax', 'prixM2Max', 'gareMax']) $(id).value = '';
   $('commune').value = '*'; $('region').value = '*'; $('source').value = '*'; $('chMin').value = '0'; $('tri').value = 'score';
@@ -1472,6 +1554,7 @@ function rendreDisparus() {
 rendreDisparus();
 
 restaurerFiltres();
+majCompteurMasques();
 rendre();
 </script>
 </body>

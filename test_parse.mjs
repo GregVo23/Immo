@@ -5,6 +5,7 @@
 
 import {
     construireAnnonce,
+    nettoyerFragments,
     dedupliquer,
     parseSurfaces,
     parsePieces,
@@ -829,6 +830,34 @@ verifier(
         { max: 6 },
     ).length,
     6,
+);
+
+/* ------------------------------------------------------------
+   REALO — l'exposant « ² » arrive dans un fragment séparé
+   ------------------------------------------------------------ */
+console.log('\n== Realo (surface coupée par un <sup>) ==');
+const realo = construireAnnonce(
+    {
+        fragments: ['395 000 €', '1300 Wavre', '1 jour', '2 chambres', '1 salle de bain', '190m', '2'],
+        lien: 'https://www.realo.be/fr/1300-wavre/5201712',
+        source: 'Realo',
+        dateExtraction: '2026-01-01',
+    },
+    hintsDe('Realo'),
+);
+// Sans recollage, les 931 biens Realo n'avaient aucune surface — donc aucun
+// prix au m², donc aucune comparaison au marché local.
+verifier('« 190m » + « 2 » → 190 m²', realo.surfaceHabitable, 190);
+verifier('prix au m² recalculé', realo.prixM2, 2079);
+verifier('chambres', realo.chambres, 2);
+verifier('salles de bain', realo.sallesDeBain, 1);
+verifier('code postal', realo.cp, '1300');
+// Le « 2 » isolé ne doit pas être confondu avec autre chose quand il ne suit
+// pas une mesure en mètres.
+verifier(
+    'un « 2 » isolé sans « m » devant reste intact',
+    nettoyerFragments(['3 chambres', '2']),
+    ['3 chambres', '2'],
 );
 
 /* ------------------------------------------------------------ */

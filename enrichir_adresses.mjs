@@ -27,6 +27,7 @@ import { chromium } from 'playwright';
 import { FICHIERS, SITES, CP_VERS_COMMUNE, regionDuCp } from './config.mjs';
 import { extraireAdresse } from './lib/adresse_detail.mjs';
 import { choisirImage, construireGalerie } from './lib/parse.mjs';
+import { lireCaracteristiques, CHAMPS_CARACTERISTIQUES } from './lib/caracteristiques.mjs';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -100,9 +101,34 @@ function recolterFiche(selecteur) {
 
     const el = selecteur ? document.querySelector(selecteur) : null;
 
-    const lignesTexte = (document.body.innerText || '')
-        .split('\n')
-        .map((l) => l.replace(/\s+/g, ' ').trim())
+    const texteBrut = (document.body.innerText || '').split('\n').map((l) => l.replace(/\s+/g, ' ').trim());
+
+    // Caractéristiques : on récolte du BRUT sous ses deux formes et c'est
+    // lib/caracteristiques.mjs qui trie. Les portails ne s'accordent sur
+    // rien — Immoweb et Trior les mettent dans des tableaux, Immovlan, ERA
+    // et Century21 alignent libellé et valeur sur deux lignes consécutives.
+    const faits = [];
+    for (const r of document.querySelectorAll('tr')) {
+        const c = [...r.querySelectorAll('th,td')].map((e) => e.textContent.replace(/\s+/g, ' ').trim());
+        if (c.length === 2 && c[0] && c[1] && c[0].length < 60 && c[1].length < 80) faits.push(c);
+        if (faits.length >= 80) break;
+    }
+    for (const dl of document.querySelectorAll('dl')) {
+        const dts = [...dl.querySelectorAll('dt')];
+        const dds = [...dl.querySelectorAll('dd')];
+        for (let i = 0; i < Math.min(dts.length, dds.length, 40); i++) {
+            faits.push([dts[i].textContent.replace(/\s+/g, ' ').trim(), dds[i].textContent.replace(/\s+/g, ' ').trim()]);
+        }
+    }
+
+    // Toutes les lignes courtes, sans filtrer : c'est ce qui permettra
+    // d'ajouter un champ plus tard sans revisiter la moindre fiche
+    // (`--sans-visite`). Mesuré : 1,4 à 5,8 Ko par fiche.
+    const lignes = texteBrut.filter((l) => l && l.length < 110).slice(0, 250);
+
+    // Lignes ressemblant à une adresse : sous-ensemble conservé tel quel,
+    // lib/adresse_detail.mjs et ses 27 tests reposent dessus.
+    const lignesTexte = texteBrut
         .filter((l) => l.length > 6 && l.length < 100 && /\b[1-9]\d{3}\b/.test(l) && MOTIF_VOIRIE.test(l))
         .slice(0, 12);
 
@@ -111,6 +137,8 @@ function recolterFiche(selecteur) {
         texteSelecteur: el ? el.textContent.replace(/\s+/g, ' ').trim() : null,
         lignesTexte,
         images,
+        faits,
+        lignes,
     };
 }
 
@@ -148,7 +176,10 @@ export async function enrichirAdresses({ limite = Infinity, visiter = true } = {
         // report ci-dessous. Une fiche dont les candidats sont déjà en cache
         // n'est donc jamais revisitée, même si la règle change.
         const manqueGalerie = !(c && 'images' in c);
-        return manqueAdresse || manqueGalerie;
+        // Idem pour les caractéristiques : une fiche dont le texte brut n'est
+        // pas encore en cache doit être revue une fois, puis plus jamais.
+        const manqueTexte = !(c && 'lignes' in c);
+        return manqueAdresse || manqueGalerie || manqueTexte;
     };
     const aTraiter = visiter ? annonces.filter(aVisiter).slice(0, limite) : [];
 
@@ -204,6 +235,10 @@ export async function enrichirAdresses({ limite = Infinity, visiter = true } = {
                     // des biens similaires, logos, icônes et tuiles de carte.
                     // Le tri se fait hors ligne, dans construireGalerie.
                     images: (brut.images ?? []).slice(0, 40),
+                    // Texte brut des caractéristiques : c'est lui qui rendra
+                    // gratuit l'ajout d'un champ (`--sans-visite`).
+                    faits: brut.faits ?? [],
+                    lignes: brut.lignes ?? [],
                     source: a.source,
                     recupereLe: new Date().toISOString(),
                 };
@@ -234,6 +269,8 @@ export async function enrichirAdresses({ limite = Infinity, visiter = true } = {
     let rejetes = 0;
     let photosPosees = 0;
     let galeries = 0;
+    let caracteristiques = 0;
+    let surfacesCorrigees = 0;
     for (const a of annonces) {
         const c = cache[a.lienCanonique];
         if (!c) continue;
@@ -242,6 +279,36 @@ export async function enrichirAdresses({ limite = Infinity, visiter = true } = {
         // retenue sur la carte en tête des candidats : elle appartient à ce
         // bien de façon certaine, ce qui ancre le tri de construireGalerie —
         // et évite de la réafficher une seconde fois sous une autre taille.
+        // Caractéristiques de la fiche. Rejouées à chaque report, donc
+        // corriger lib/caracteristiques.mjs ne demande aucune visite.
+        // On efface avant de réappliquer : le parseur fait foi, y compris
+        // quand il ne trouve plus rien (une règle corrigée doit pouvoir
+        // RETIRER une valeur, pas seulement en ajouter).
+        for (const cle of CHAMPS_CARACTERISTIQUES) delete a[cle];
+        const carac = lireCaracteristiques(c);
+
+        // Les surfaces ne sont pas de simples champs à recopier : elles
+        // corrigent celles de la carte, et le prix au m² doit suivre.
+        const { surfaceHabitableFiche, surfaceTerrainFiche, ...autres } = carac;
+        if (surfaceHabitableFiche) {
+            a.surfaceHabitable = surfaceHabitableFiche;
+        } else if (surfaceTerrainFiche && a.surfaceHabitable === surfaceTerrainFiche) {
+            // La carte n'affichait qu'une surface, sans libellé, et la fiche
+            // révèle que c'était le TERRAIN : « Maison 3 ch. à Ternat, 727 m² »
+            // dont la fiche ne donne aucune surface habitable mais bien
+            // « Surface du terrain 727 m² ». Lue comme habitable, elle
+            // affichait 439 €/m², soit 81 % sous le marché local.
+            a.surfaceHabitable = null;
+            if (!a.champsManquants?.includes('surfaceHabitable')) (a.champsManquants ??= []).push('surfaceHabitable');
+            surfacesCorrigees++;
+        }
+        if (surfaceTerrainFiche) a.surfaceTerrain = surfaceTerrainFiche;
+        a.prixM2 = a.prix && a.surfaceHabitable ? Math.round(a.prix / a.surfaceHabitable) : null;
+
+        if (Object.keys(autres).length) {
+            Object.assign(a, autres);
+            caracteristiques++;
+        }
         const galerie = construireGalerie([a.imageUrl, ...(c.images ?? [])], { max: 10 });
         if (!a.imageUrl && galerie.length) {
             a.imageUrl = galerie[0];
@@ -285,6 +352,8 @@ export async function enrichirAdresses({ limite = Infinity, visiter = true } = {
     const avecPhoto = annonces.filter((a) => a.imageUrl).length;
     const pct = Math.round((avecAdresse / Math.max(annonces.length, 1)) * 100);
     console.log(`   ✅ ${enrichis} adresse(s), ${photosPosees} photo(s) et ${galeries} galerie(s) ajoutée(s) ce run.`);
+    console.log(`   ✅ ${caracteristiques} bien(s) enrichi(s) depuis les caractéristiques de leur fiche.`);
+    if (surfacesCorrigees) console.log(`   🔧 ${surfacesCorrigees} surface(s) habitable(s) retirée(s) : la carte affichait le terrain.`);
     console.log(`   → ${avecAdresse}/${annonces.length} (${pct} %) avec adresse exacte, ${avecPhoto}/${annonces.length} avec photo.`);
     console.log(`   → relance « npm run dashboard » pour recalculer positions et distances.`);
 

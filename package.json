@@ -6,8 +6,11 @@
     "start": "node scrapper_immo.mjs",
     "reparse": "node parse_annonces.mjs",
     "adresses": "node enrichir_adresses.mjs",
+    "adresses:cache": "node enrichir_adresses.mjs --sans-visite",
     "dashboard": "node generate_dashboard.mjs",
-    "test": "node test_parse.mjs && node test_historique.mjs && node test_adresse.mjs && node test_sante.mjs",
+    "gares": "node maj_gares.mjs",
+    "explorer": "node explorer_site.mjs",
+    "test": "node test_parse.mjs && node test_historique.mjs && node test_adresse.mjs && node test_sante.mjs && node test_caracteristiques.mjs && node test_marche.mjs",
     "all": "node scrapper_immo.mjs && node enrichir_adresses.mjs && node generate_dashboard.mjs"
   },
   "dependencies": {
